@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { UNIFORMS } from '../engine/constants';
 import { LEG, gaitTargets } from '../engine/gait';
 import { BODY, RIFLE_CARRIAGE } from '../engine/pose';
@@ -44,6 +45,38 @@ function pose(fig: Figure, snapshot: Snapshot, stride = 0, time = 0, frames = 30
 }
 
 describe('live rig', () => {
+  it('binds a continuous skinned body with normalised weights', () => {
+    const fig = rig();
+    let meshes = 0;
+    const skinned: THREE.SkinnedMesh[] = [];
+    fig.group.traverse((object) => {
+      const mesh = object as THREE.SkinnedMesh;
+      if (!mesh.isSkinnedMesh) return;
+      meshes += 1;
+      skinned.push(mesh);
+      expect(mesh.skeleton.bones.length).toBeGreaterThanOrEqual(21);
+      const weights = mesh.geometry.getAttribute('skinWeight');
+      const indices = mesh.geometry.getAttribute('skinIndex');
+      expect(indices.count).toBe(weights.count);
+      expect(weights.count).toBeGreaterThan(80);
+      for (let i = 0; i < weights.count; i += 11) {
+        let sum = 0;
+        for (let slot = 0; slot < 4; slot += 1) {
+          const w = weights.getComponent(i, slot);
+          const bone = indices.getComponent(i, slot);
+          expect(w).toBeGreaterThanOrEqual(0);
+          expect(bone).toBeLessThan(mesh.skeleton.bones.length);
+          sum += w;
+        }
+        expect(sum).toBeCloseTo(1, 5);
+      }
+    });
+    // Trunk, both arms, neck and both legs: one surface each, not capsules.
+    expect(meshes).toBeGreaterThanOrEqual(5);
+    expect(skinned.every((mesh) => mesh.frustumCulled === false)).toBe(true);
+    fig.dispose();
+  });
+
   it('stands at attention with straight legs, feet on the ground and heels together', () => {
     const fig = rig();
     pose(fig, BASE);

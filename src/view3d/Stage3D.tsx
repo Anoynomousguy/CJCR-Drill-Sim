@@ -27,7 +27,12 @@ export function Stage3D() {
   const timeline = useStore((s) => s.timeline);
   const detail = useStore((s) => s.detail);
   const bodyMode = useStore((s) => s.body);
-  const [anatomy, setAnatomy] = useState<{ name: string; gait: string; angles: JointReading[] } | null>(null);
+  const [anatomy, setAnatomy] = useState<{
+    name: string;
+    gait: string;
+    angles: JointReading[];
+    muscles: { name: string; activation: number; peak: number }[];
+  } | null>(null);
   const hudClock = useRef(0);
 
   // --- scene setup (once) -------------------------------------------------
@@ -192,7 +197,12 @@ export function Stage3D() {
         const lead = sample.soldiers[0];
         const fig = lead ? api.figures.get(lead.soldier.id) : undefined;
         if (lead && fig) {
-          setAnatomy({ name: lead.soldier.name, gait: lead.gait, angles: fig.getAngles() });
+          setAnatomy({
+            name: lead.soldier.name,
+            gait: lead.gait,
+            angles: fig.getAngles(),
+            muscles: fig.getMuscles().slice(0, 4),
+          });
         }
       }
       if (api.preset === 'follow' && sample.soldiers.length) {
@@ -322,6 +332,20 @@ export function Stage3D() {
               );
             })}
           </ul>
+          {bodyMode === 'muscles' && anatomy.muscles.length > 0 && (
+            <div className="anatomy-muscles">
+              <div className="anatomy-sub">Driving this phase</div>
+              {anatomy.muscles.map((m) => (
+                <div className="muscle-row" key={m.name}>
+                  <span>{m.name}</span>
+                  <span className="muscle-bar">
+                    <i style={{ width: `${Math.round(m.activation * 100)}%` }} />
+                  </span>
+                  <em>{Math.round(m.activation * 100)}%</em>
+                </div>
+              ))}
+            </div>
+          )}
           <p className="anatomy-note">{GAIT_ANATOMY[anatomy.gait as keyof typeof GAIT_ANATOMY]?.note}</p>
         </div>
       )}

@@ -34,6 +34,14 @@ import {
 } from '../engine/gait';
 import { turnFootwork, type TurnFootwork, type TurnPlan } from '../engine/turn';
 import type { Snapshot } from '../engine/types';
+import {
+  MUSCLES,
+  muscleActivationFor,
+  type MuscleBone,
+  type MuscleDef,
+  type Side,
+} from '../engine/muscles';
+import { buildSkin, type SkinBoneName } from './skin';
 
 type V3 = Vec3;
 
@@ -116,6 +124,8 @@ export interface Figure {
   getAngles: () => JointReading[];
   getCarriage: () => { weapon: Carriage | null; colour: Carriage | null };
   getPose: () => FigurePose;
+  /** Muscles working hardest right now, for the anatomy readout. */
+  getMuscles: () => { name: string; activation: number; peak: number }[];
   animate: (anim: FigureAnim) => void;
   tick: (dt: number, time: number) => void;
   dispose: () => void;
@@ -228,28 +238,34 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
     add(parent, new THREE.SphereGeometry(radius, fine ? 14 : 8, fine ? 10 : 6), mats.cartilage, [x, y, z], undefined, 'bone');
 
   // ================================================================ skeleton
-  const pelvis = new THREE.Group();
+  // Every joint is a Bone, not a Group: the skin is bound to these objects, so
+  // the surface deforms with the same transforms the drill solver produces.
+  const pelvis = new THREE.Bone();
+  pelvis.name = 'pelvis';
   pelvis.position.y = HIP;
   body.add(pelvis);
 
-  const spine = new THREE.Group();
+  const spine = new THREE.Bone();
+  spine.name = 'spine';
   spine.position.y = SPINE_Y;
   pelvis.add(spine);
 
-  const chest = new THREE.Group();
+  const chest = new THREE.Bone();
+  chest.name = 'chest';
   chest.position.y = CHEST_Y;
   spine.add(chest);
 
-  const neck = new THREE.Group();
+  const neck = new THREE.Bone();
+  neck.name = 'neck';
   neck.position.y = NECK_Y;
   chest.add(neck);
 
-  const head = new THREE.Group();
+  const head = new THREE.Bone();
+  head.name = 'head';
   head.position.y = HEAD_Y;
   neck.add(head);
 
   // ----------------------------------------------------------------- pelvis
-  add(pelvis, rbox(0.3, 0.19, 0.21, 0.05), mats.trousers, [0, 0.01, 0]);
   const iliumL = add(pelvis, new THREE.SphereGeometry(0.072, fine ? 14 : 8, 8), mats.bone, [0.068, 0.02, -0.015], undefined, 'bone');
   iliumL.scale.set(1.3, 1.15, 0.6);
   const iliumR = add(pelvis, new THREE.SphereGeometry(0.072, fine ? 14 : 8, 8), mats.bone, [-0.068, 0.02, -0.015], undefined, 'bone');
@@ -267,13 +283,20 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   add(spine, rbox(0.12, 0.05, 0.03, 0.012), mats.bone, [0, 0.06, -0.045], undefined, 'bone');
 
   // ------------------------------------------------------------------ chest
-  add(chest, rbox(0.355, 0.4, 0.225, 0.055), mats.tunic, [0, 0.08, 0]);
-  add(chest, rbox(0.17, 0.05, 0.15, 0.02), mats.shirt, [0, 0.285, 0.005]);
-  add(chest, rbox(0.2, 0.05, 0.04, 0.014), mats.tunicShade, [0, 0.3, 0.02]);
-  add(chest, rbox(0.045, 0.3, 0.018, 0.01), mats.tunicShade, [-0.085, 0.14, 0.114], [0, 0, 0.1]);
-  add(chest, rbox(0.045, 0.3, 0.018, 0.01), mats.tunicShade, [0.085, 0.14, 0.114], [0, 0, -0.1]);
-  add(chest, rbox(0.12, 0.022, 0.075, 0.01), mats.accent, [-0.155, 0.285, 0]);
-  add(chest, rbox(0.12, 0.022, 0.075, 0.01), mats.accent, [0.155, 0.285, 0]);
+  // The tunic hangs on the skinned trunk now; only the fittings are meshes. A
+  // narrow placket and buttons instead of two slabs, and epaulettes that sit on
+  // the slope of the trapezius instead of floating above it.
+  add(chest, rbox(0.034, 0.3, 0.016, 0.008), mats.tunicShade, [0, 0.135, 0.112]);
+  add(chest, rbox(0.09, 0.012, 0.05, 0.006), mats.tunicShade, [-0.108, 0.255, 0.004], [0, 0, 0.42]);
+  add(chest, rbox(0.09, 0.012, 0.05, 0.006), mats.tunicShade, [0.108, 0.255, 0.004], [0, 0, -0.42]);
+  add(chest, rbox(0.075, 0.055, 0.025, 0.012), mats.shirt, [0, 0.262, 0.072]);
+  const collar = add(
+    chest,
+    new THREE.CylinderGeometry(0.076, 0.09, 0.062, 18, 1, true),
+    mats.tunicShade,
+    [0, 0.29, 0.0],
+  );
+  collar.scale.z = 0.88;
   if (fine) {
     for (let i = 0; i < 4; i += 1) {
       add(chest, new THREE.SphereGeometry(0.011, 8, 8), mats.badge, [0.0, 0.0 + i * 0.068, 0.118]);
@@ -299,20 +322,23 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   void scapR;
 
   // ------------------------------------------------------------------- neck
-  add(neck, new THREE.CylinderGeometry(0.042, 0.05, 0.075, 12), mats.skin, [0, 0.02, 0]);
   for (let i = 0; i < 3; i += 1) {
     add(neck, rbox(0.042, 0.016, 0.038, 0.006), mats.bone, [0, 0.0 + i * 0.024, -0.005], undefined, 'bone');
   }
 
   // ------------------------------------------------------------------- head
   const skull = add(head, new THREE.SphereGeometry(0.099, fine ? 22 : 12, fine ? 16 : 10), mats.skin, [0, 0.1, 0]);
-  skull.scale.set(0.95, 1.12, 1.0);
-  const jaw = add(head, new THREE.SphereGeometry(0.072, 14, 10), mats.skin, [0, 0.04, 0.022]);
-  jaw.scale.set(0.9, 0.82, 0.95);
-  add(head, new THREE.SphereGeometry(0.026, 8, 8), mats.skin, [0, 0.095, 0.097]);
-  add(head, new THREE.SphereGeometry(0.022, 8, 8), mats.skin, [-0.096, 0.105, 0.005]);
-  add(head, new THREE.SphereGeometry(0.022, 8, 8), mats.skin, [0.096, 0.105, 0.005]);
+  skull.scale.set(0.9, 1.1, 0.98);
+  const jaw = add(head, new THREE.SphereGeometry(0.066, 14, 10), mats.skin, [0, 0.036, 0.022]);
+  jaw.scale.set(0.86, 0.78, 0.95);
+  add(head, new THREE.SphereGeometry(0.021, 8, 8), mats.skin, [0, 0.092, 0.098]);
+  add(head, new THREE.SphereGeometry(0.014, 8, 8), mats.skin, [-0.086, 0.1, 0.004]);
+  add(head, new THREE.SphereGeometry(0.014, 8, 8), mats.skin, [0.086, 0.1, 0.004]);
   add(head, new THREE.SphereGeometry(0.035, 10, 10), mats.hair, [0, 0.07, -0.06]);
+  // Eyes and a mouth, so the face reads at the distance a viewer sees it.
+  add(head, new THREE.SphereGeometry(0.0085, 10, 8), mats.socket, [-0.033, 0.108, 0.092]);
+  add(head, new THREE.SphereGeometry(0.0085, 10, 8), mats.socket, [0.033, 0.108, 0.092]);
+  add(head, rbox(0.036, 0.006, 0.008, 0.002), mats.socket, [0, 0.052, 0.092]);
 
   const cranium = add(head, new THREE.SphereGeometry(0.09, fine ? 18 : 10, fine ? 14 : 8), mats.bone, [0, 0.11, 0], undefined, 'bone');
   cranium.scale.set(0.95, 1.08, 1.0);
@@ -322,25 +348,25 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   add(head, rbox(0.018, 0.028, 0.02, 0.006), mats.socket, [0, 0.075, 0.092], undefined, 'bone');
 
   const beret = new THREE.Group();
-  beret.position.set(0, 0.177, -0.008);
-  beret.rotation.z = -0.1;
-  beret.rotation.x = -0.05;
+  beret.position.set(0, 0.2, -0.006);
+  beret.rotation.z = -0.06;
+  beret.rotation.x = -0.04;
   head.add(beret);
-  const crown = add(beret, new THREE.SphereGeometry(0.118, 18, 12), mats.beret, [0.012, 0.012, 0.012]);
-  crown.scale.set(1.06, 0.42, 1.02);
-  add(beret, new THREE.TorusGeometry(0.1, 0.012, 8, 22), mats.beret, [0.005, -0.012, 0.006], [Math.PI / 2, 0, 0]);
+  const crown = add(beret, new THREE.SphereGeometry(0.112, 18, 12), mats.beret, [0.014, 0.008, 0.01]);
+  crown.scale.set(1.02, 0.34, 0.99);
+  add(beret, new THREE.TorusGeometry(0.095, 0.012, 8, 22), mats.beret, [0.004, -0.018, 0.005], [Math.PI / 2, 0, 0]);
   add(beret, rbox(0.034, 0.03, 0.012, 0.006), mats.badge, [0.0, 0.0, 0.107]);
 
   // ==================================================================== arms
   interface HandRig {
-    group: THREE.Group;
+    group: THREE.Bone;
     joints: THREE.Group[][];
     thumb: THREE.Group[];
     curl: number;
   }
 
   const makeHand = (side: 1 | -1): HandRig => {
-    const hand = new THREE.Group();
+    const hand = new THREE.Bone();
     add(hand, rbox(0.072, 0.088, 0.026, 0.012), mats.skin, [0, -0.044, 0]);
     add(hand, rbox(0.062, 0.07, 0.018, 0.008), mats.bone, [0, -0.05, 0.006], undefined, 'bone');
     add(hand, new THREE.SphereGeometry(0.024, 10, 8), mats.skin, [0, -0.004, 0]);
@@ -413,68 +439,78 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   }
 
   interface ArmRig {
-    shoulder: THREE.Group;
-    upper: THREE.Group;
-    elbow: THREE.Group;
+    /** Sternoclavicular joint: lets the shoulder girdle lead the arm. */
+    clav: THREE.Bone;
+    shoulder: THREE.Bone;
+    upper: THREE.Bone;
+    elbow: THREE.Bone;
     hand: HandRig;
   }
 
   const makeArm = (side: 1 | -1): ArmRig => {
-    const shoulder = new THREE.Group();
-    shoulder.position.set(side * BODY.shoulderX, SHOULDER_Y, 0);
-    chest.add(shoulder);
-    const upper = new THREE.Group();
+    const suffix = side === 1 ? 'L' : 'R';
+    const clav = new THREE.Bone();
+    clav.name = `clav.${suffix}`;
+    clav.position.set(0, SHOULDER_Y - 0.02, 0.005);
+    chest.add(clav);
+    const shoulder = new THREE.Bone();
+    shoulder.name = `shoulder.${suffix}`;
+    shoulder.position.set(side * BODY.shoulderX, 0.02, -0.005);
+    clav.add(shoulder);
+    const upper = new THREE.Bone();
+    upper.name = `upperArm.${suffix}`;
     shoulder.add(upper);
-    add(upper, new THREE.CapsuleGeometry(0.058, 0.18, 5, 12), mats.tunic, [0, -HUMERUS / 2, 0]);
-    if (fine) add(upper, new THREE.SphereGeometry(0.064, 12, 10), mats.tunic, [0, -0.02, 0]);
+    jointBall(clav, 0.028, side * 0.13, 0.006, -0.002);
     jointBall(shoulder, 0.03, 0, 0, 0);
     bone(upper, HUMERUS, 0.024);
     jointBall(upper, 0.02, 0, -HUMERUS, 0);
 
-    const elbow = new THREE.Group();
+    const elbow = new THREE.Bone();
+    elbow.name = `foreArm.${suffix}`;
     elbow.position.y = -HUMERUS;
     upper.add(elbow);
-    add(elbow, new THREE.CapsuleGeometry(0.046, 0.16, 5, 12), mats.tunic, [0, -FOREARM / 2, 0]);
     bone(elbow, FOREARM, 0.017, -0.012);
     bone(elbow, FOREARM, 0.012, 0.014);
     jointBall(elbow, 0.018, 0, 0, 0);
 
     const hand = makeHand(side);
+    hand.group.name = `hand.${suffix}`;
     hand.group.position.y = -FOREARM;
     elbow.add(hand.group);
-    return { shoulder, upper, elbow, hand };
+    return { clav, shoulder, upper, elbow, hand };
   };
   const armL = makeArm(1);
   const armR = makeArm(-1);
 
   // ==================================================================== legs
   interface LegRig {
-    hip: THREE.Group;
-    knee: THREE.Group;
-    ankle: THREE.Group;
-    toe: THREE.Group;
+    hip: THREE.Bone;
+    knee: THREE.Bone;
+    ankle: THREE.Bone;
+    toe: THREE.Bone;
   }
 
   const makeLeg = (side: 1 | -1): LegRig => {
-    const hip = new THREE.Group();
+    const suffix = side === 1 ? 'L' : 'R';
+    const hip = new THREE.Bone();
+    hip.name = `thigh.${suffix}`;
     hip.position.set(side * LEG.hipX, HIP, 0);
     body.add(hip);
-    add(hip, new THREE.CapsuleGeometry(0.075, 0.32, 5, 12), mats.trousers, [0, -FEMUR / 2 - 0.01, 0]);
-    if (fine) add(hip, new THREE.SphereGeometry(0.077, 12, 10), mats.trousers, [0, -0.02, 0]);
     bone(hip, FEMUR, 0.027);
     add(hip, new THREE.SphereGeometry(0.032, 10, 8), mats.cartilage, [0, -FEMUR + 0.03, 0.035], undefined, 'bone');
 
-    const knee = new THREE.Group();
+    const knee = new THREE.Bone();
+    knee.name = `shin.${suffix}`;
     knee.position.y = -FEMUR;
     hip.add(knee);
-    add(knee, new THREE.CapsuleGeometry(0.055, 0.31, 5, 12), mats.trousers, [0, -TIBIA / 2, 0]);
     bone(knee, TIBIA, 0.023);
     bone(knee, TIBIA * 0.92, 0.011, side * 0.024, 0.012);
     jointBall(knee, 0.026, 0, 0, 0);
     add(knee, new THREE.SphereGeometry(0.017, 8, 6), mats.bone, [0, -0.015, 0.045], undefined, 'bone');
 
     // The foot is two rigid parts joined at the MTP (ball) joint.
-    const ankle = new THREE.Group();
+    const ankle = new THREE.Bone();
+    ankle.name = `foot.${suffix}`;
     ankle.position.y = -TIBIA;
     knee.add(ankle);
     add(ankle, rbox(0.095, 0.042, 0.155, 0.018), mats.boots, [0, -0.042, -0.012]);
@@ -484,7 +520,8 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
     add(ankle, new THREE.SphereGeometry(0.018, 8, 6), mats.cartilage, [0, 0, -0.012], undefined, 'bone');
     jointBall(ankle, 0.019, 0, 0, 0);
 
-    const toe = new THREE.Group();
+    const toe = new THREE.Bone();
+    toe.name = `toe.${suffix}`;
     toe.position.set(0, -0.045, 0.105);
     ankle.add(toe);
     add(toe, rbox(0.09, 0.036, 0.13, 0.014), mats.boots, [0, 0.002, 0.06]);
@@ -503,6 +540,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   // frame its real length is measured and the belly is scaled: shorter muscle,
   // fatter belly. These are the prime movers of the joints the rig animates.
   interface MuscleRig {
+    def: MuscleDef;
     mesh: THREE.Mesh;
     a: THREE.Object3D;
     pa: THREE.Vector3;
@@ -510,19 +548,37 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
     pb: THREE.Vector3;
     radius: number;
     rest: number;
+    activation: number;
   }
   const muscles: MuscleRig[] = [];
-  const muscleGeo = new THREE.SphereGeometry(1, 10, 8);
+  // A belly, not a wire: a spindle that tapers into its tendons at both ends
+  // and is fattest a little above the middle where the fibres bunch.
+  const muscleGeo = new THREE.LatheGeometry(
+    [
+      new THREE.Vector2(0.04, -1),
+      new THREE.Vector2(0.18, -0.92),
+      new THREE.Vector2(0.5, -0.6),
+      new THREE.Vector2(0.85, -0.2),
+      new THREE.Vector2(1, 0.05),
+      new THREE.Vector2(0.86, 0.32),
+      new THREE.Vector2(0.5, 0.66),
+      new THREE.Vector2(0.18, 0.92),
+      new THREE.Vector2(0.04, 1),
+    ],
+    10,
+  );
   const addMuscle = (
     a: THREE.Object3D,
     pa: V3,
     b: THREE.Object3D,
     pb: V3,
     radius: number,
+    def: MuscleDef,
   ) => {
     const mesh = add(body, muscleGeo, mats.muscle, [0, 0, 0], undefined, 'muscle');
     mesh.castShadow = false;
     const rig: MuscleRig = {
+      def,
       mesh,
       a,
       pa: new THREE.Vector3(...pa),
@@ -530,43 +586,100 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       pb: new THREE.Vector3(...pb),
       radius,
       rest: 0,
+      activation: 0,
     };
     muscles.push(rig);
   };
 
-  const M = (side: 1 | -1) => {
-    const s = side;
-    // hip and thigh
-    addMuscle(pelvis, [0.06 * s, -0.015, -0.07], legFor(side).hip, [0.005 * s, -0.11, -0.055], 0.034); // gluteus maximus
-    addMuscle(pelvis, [0.02 * s, 0.015, 0.02], legFor(side).hip, [0, -0.07, 0.028], 0.026); // iliopsoas
-    addMuscle(pelvis, [0.05 * s, 0.015, 0.07], legFor(side).knee, [0, -0.025, 0.05], 0.028); // rectus femoris
-    addMuscle(legFor(side).hip, [0.045 * s, -0.13, 0.015], legFor(side).knee, [0.012 * s, -0.025, 0.044], 0.026); // vastus lateralis
-    addMuscle(legFor(side).hip, [-0.035 * s, -0.18, 0.02], legFor(side).knee, [-0.01 * s, -0.035, 0.044], 0.024); // vastus medialis
-    addMuscle(pelvis, [-0.045 * s, -0.03, -0.062], legFor(side).knee, [0.022 * s, -0.09, -0.043], 0.027); // biceps femoris
-    addMuscle(pelvis, [0.032 * s, -0.04, -0.068], legFor(side).knee, [-0.018 * s, -0.125, -0.028], 0.022); // semitendinosus
-    // shank and foot
-    addMuscle(legFor(side).knee, [0.018 * s, -0.06, 0.034], legFor(side).ankle, [0.012 * s, 0.002, 0.048], 0.015); // tibialis anterior
-    addMuscle(legFor(side).knee, [-0.016 * s, -0.02, -0.035], legFor(side).ankle, [0, -0.004, -0.043], 0.018); // gastrocnemius
-    addMuscle(legFor(side).knee, [0.01 * s, -0.17, -0.025], legFor(side).ankle, [0, -0.004, -0.05], 0.016); // soleus
-    // pelvis to spine
-    addMuscle(pelvis, [0.03 * s, 0.02, -0.055], chest, [0.03 * s, 0.05, -0.08], 0.021); // erector spinae
-    addMuscle(pelvis, [0.025 * s, 0.02, 0.055], chest, [0.03 * s, 0.09, 0.1], 0.019); // rectus abdominis
-    // shoulder and arm
-    addMuscle(chest, [0.15 * s, 0.28, 0], armFor(side).upper, [0, -0.06, 0], 0.03); // deltoid
-    addMuscle(chest, [0.045 * s, 0.22, 0.09], armFor(side).upper, [0, -0.1, 0.02], 0.028); // pectoralis major
-    addMuscle(chest, [0.07 * s, 0.1, -0.08], armFor(side).upper, [0, -0.12, -0.015], 0.024); // latissimus dorsi
-    addMuscle(chest, [0.1 * s, 0.3, -0.055], armFor(side).upper, [0, -0.02, -0.005], 0.018); // trapezius
-    addMuscle(armFor(side).upper, [0, -0.03, 0.03], armFor(side).elbow, [0, -0.02, 0.026], 0.018); // biceps brachii
-    addMuscle(armFor(side).upper, [0, -0.04, -0.032], armFor(side).elbow, [0, -0.03, -0.03], 0.017); // triceps brachii
-    addMuscle(armFor(side).upper, [0, -0.22, 0.018], armFor(side).hand.group, [0, 0.0, 0.012], 0.012); // brachioradialis
-    // neck
-    addMuscle(chest, [0.03 * s, 0.3, 0.05], head, [0.025 * s, 0.02, 0.02], 0.013); // sternocleidomastoid
+  // =========================================================== uniform fit
+  const beltMesh = add(
+    pelvis,
+    new THREE.CylinderGeometry(1, 1, 0.05, 24, 1, true),
+    mats.belt,
+    [0, 0.062, 0],
+  );
+  beltMesh.scale.set(0.153, 1, 0.109);
+  add(pelvis, rbox(0.062, 0.042, 0.02, 0.006), mats.accent, [0, 0.062, 0.113]);
+  if (fine) {
+    // Brassard on the left upper arm, wrapped to the arm rather than floating
+    // over the chest.
+    const brassard = add(
+      armL.upper,
+      new THREE.CylinderGeometry(0.057, 0.057, 0.095, 16, 1, true),
+      mats.brassard,
+      [0, -0.085, 0],
+    );
+    brassard.scale.z = 0.86;
+  }
+
+  // ============================================================== skin
+  // The uniform is one continuous surface over the bones now. Bind in the rest
+  // pose, before any movement has rotated a joint.
+  const skinBones: Record<SkinBoneName, THREE.Bone> = {
+    pelvis,
+    spine,
+    chest,
+    neck,
+    head,
+    'clav.L': armL.clav,
+    'upperArm.L': armL.upper,
+    'foreArm.L': armL.elbow,
+    'hand.L': armL.hand.group,
+    'clav.R': armR.clav,
+    'upperArm.R': armR.upper,
+    'foreArm.R': armR.elbow,
+    'hand.R': armR.hand.group,
+    'thigh.L': legL.hip,
+    'shin.L': legL.knee,
+    'foot.L': legL.ankle,
+    'toe.L': legL.toe,
+    'thigh.R': legR.hip,
+    'shin.R': legR.knee,
+    'foot.R': legR.ankle,
+    'toe.R': legR.toe,
+  };
+  group.updateMatrixWorld(true);
+  const skin = buildSkin(
+    skinBones,
+    { tunic: mats.tunic, trousers: mats.trousers, skin: mats.skin },
+    kit.detail,
+  );
+  for (const mesh of skin.meshes) {
+    body.add(mesh);
+    uniformMeshes.push(mesh);
+  }
+
+  // ============================================================== muscles
+  // Attachments come from the muscle table in body space; convert each to its
+  // bone's local space once, here, so the belly follows both bones afterwards.
+  const boneFor = (side: Side, name: MuscleBone): THREE.Object3D => {
+    switch (name) {
+      case 'pelvis': return pelvis;
+      case 'spine': return spine;
+      case 'chest': return chest;
+      case 'neck': return neck;
+      case 'head': return head;
+      case 'clav': return side === 'L' ? armL.clav : armR.clav;
+      case 'upperArm': return side === 'L' ? armL.upper : armR.upper;
+      case 'foreArm': return side === 'L' ? armL.elbow : armR.elbow;
+      case 'hand': return side === 'L' ? armL.hand.group : armR.hand.group;
+      case 'thigh': return side === 'L' ? legL.hip : legR.hip;
+      case 'shin': return side === 'L' ? legL.knee : legR.knee;
+      case 'foot': return side === 'L' ? legL.ankle : legR.ankle;
+    }
   };
 
-  const legFor = (side: 1 | -1) => (side === 1 ? legL : legR);
-  const armFor = (side: 1 | -1) => (side === 1 ? armL : armR);
-  M(1);
-  M(-1);
+  group.updateMatrixWorld(true);
+  for (const def of MUSCLES) {
+    const originBone = boneFor(def.side, def.origin.bone);
+    const insertBone = boneFor(def.side, def.insertion.bone);
+    const pa = originBone.worldToLocal(new THREE.Vector3(...def.origin.at));
+    const pb = insertBone.worldToLocal(new THREE.Vector3(...def.insertion.at));
+    // A belly has volume: real quadriceps are seven or eight centimetres
+    // across, not two. The table carries the fibre radius; the drawn belly is
+    // that radius at full bulge.
+    addMuscle(originBone, [pa.x, pa.y, pa.z], insertBone, [pb.x, pb.y, pb.z], def.radius * 1.5, def);
+  }
 
   // ======================================================= rifle / colour
   const weapon = new THREE.Group();
@@ -634,6 +747,12 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   let hasHeading = false;
   let lastTime = 0;
   let firstAnim = true;
+  // The thorax and head do not arrive with the pelvis: they settle a beat
+  // later. A first-order lag is enough to give the turn and the step a
+  // follow-through instead of a pose that snaps to its target.
+  let chestLag = 0;
+  let headLag = 0;
+  let lagInit = false;
   let liveL: FootTarget = standTargets().left;
   let liveR: FootTarget = standTargets().right;
   let liveHipY = standTargets().hipY;
@@ -709,6 +828,11 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
     },
     getPose() {
       return pose;
+    },
+    getMuscles() {
+      return muscles
+        .map((m) => ({ name: m.def.name, activation: m.activation, peak: m.def.peak }))
+        .sort((a, b) => b.activation - a.activation);
     },
     animate(anim) {
       const dt = lastTime ? Math.min(0.12, Math.max(0, anim.time - lastTime)) : 1 / 60;
@@ -803,6 +927,18 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       const lean = clampJoint('lumbarFlexion', g.lean) * blend;
       const pelvisYaw = -g.yaw * blend + leads.pelvisYaw * turnWeight;
       const list = g.list * blend + leads.list * turnWeight;
+      const eyes = anim.eyes;
+      const cervical = eyes === 'right' ? -EYES_RIGHT.cervical : eyes === 'left' ? EYES_RIGHT.cervical : 0;
+      const lagRate = 1 - Math.exp(-Math.max(0.004, dt) * 13);
+      const chestTarget = g.yaw * 1.05 * blend + leads.chestYaw * turnWeight;
+      const headTarget = cervical * 0.45 - g.yaw * 0.35 + leads.headYaw * 0.45 * turnWeight;
+      if (!lagInit) {
+        chestLag = chestTarget;
+        headLag = headTarget;
+        lagInit = true;
+      }
+      chestLag += (chestTarget - chestLag) * lagRate;
+      headLag += (headTarget - headLag) * lagRate;
 
       pelvis.rotation.set(
         rad(clampJoint('lumbarFlexion', lean * 0.35 + spLumbar * 0.3 + leads.lean * 0.2)),
@@ -829,22 +965,21 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       // turn it leads: a body turns its shoulders before its hips.
       chest.rotation.set(
         rad(lean * 0.2 + spThoracic * 0.3),
-        rad(g.yaw * 1.05 * blend + leads.chestYaw * turnWeight),
+        rad(chestLag),
         rad(-list * 0.3),
       );
 
-      // --- head: eyes are cervical rotation; in a turn the head leads
-      const eyes = anim.eyes;
-      const cervical = eyes === 'right' ? -EYES_RIGHT.cervical : eyes === 'left' ? EYES_RIGHT.cervical : 0;
+      // --- head: eyes are cervical rotation; the head stabilises the gaze, so
+      // it lags the chest and takes out part of the pelvic list.
       neck.rotation.set(
         rad(spCervical * 0.45),
         rad(cervical * 0.55 + leads.headYaw * 0.55 * turnWeight),
-        rad(-list * 0.2),
+        rad(-list * 0.12),
       );
       head.rotation.set(
         rad(spCervical * 0.35),
-        rad(cervical * 0.45 - g.yaw * 0.35 + leads.headYaw * 0.45 * turnWeight),
-        rad(-list * 0.25),
+        rad(headLag),
+        rad(-list * 0.1),
       );
       beret.visible = anim.headdress === 'worn';
 
@@ -905,7 +1040,19 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         const wrist: V3 = grip > 0.5
           ? [target[0] + out.x * 0.03, target[1] + out.y * 0.03, target[2] + out.z * 0.03]
           : target;
-        const S = new THREE.Vector3(side * BODY.shoulderX, SHOULDER_Y, 0);
+        // Scapulohumeral rhythm: the shoulder girdle rotates about one degree
+        // for every two of arm elevation, and protracts when the hand reaches
+        // across the body. The socket lifts before the arm is asked to reach,
+        // which is why a real high grip does not look strained at the shoulder.
+        const restShoulder = new THREE.Vector3(side * BODY.shoulderX, SHOULDER_Y, 0);
+        const horizontal = Math.max(0.02, Math.hypot(target[0] - restShoulder.x, target[2]));
+        const elevation = (Math.atan2(target[1] - restShoulder.y, horizontal) * 180) / Math.PI;
+        const upward = Math.max(0, Math.min(20, (elevation - 12) / 3.2));
+        const across = Math.max(0, Math.min(9, (Math.abs(restShoulder.x) - side * target[0]) * 45));
+        arm.clav.rotation.set(0, rad(-side * across), rad(side * upward));
+        const S = new THREE.Vector3(side * BODY.shoulderX, 0.02, -0.005)
+          .applyQuaternion(arm.clav.quaternion)
+          .add(arm.clav.position);
         const T = new THREE.Vector3(wrist[0], wrist[1], wrist[2]);
         const dir = T.clone().sub(S);
         const rawDist = dir.length();
@@ -914,7 +1061,16 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         const along = (HUMERUS * HUMERUS - FOREARM * FOREARM + dist * dist) / (2 * dist);
         const height = Math.sqrt(Math.max(0.0002, HUMERUS * HUMERUS - along * along));
         const base = S.clone().addScaledVector(dir, along);
-        const pole = new THREE.Vector3(side * 0.55, 0.1, -0.35);
+        // Where the elbow goes is pure anatomy. With the hand below the
+        // shoulder the upper arm hangs and the forearm rises in front, so the
+        // elbow sits behind the arm line. With the hand raised the elbow swings
+        // out and down. A single fixed pole gets one of those wrong.
+        const low = clamp01((S.y - target[1]) / 0.35);
+        const pole = new THREE.Vector3(
+          side * (0.65 - 0.4 * low),
+          -0.75 + 0.7 * low,
+          -0.2 - 0.77 * low,
+        );
         pole.addScaledVector(dir, -pole.dot(dir));
         if (pole.lengthSq() < 1e-6) pole.set(0, 0, -1);
         pole.normalize();
@@ -923,9 +1079,13 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         const wristPos = S.clone().addScaledVector(dir, dist);
         const foreDir = wristPos.clone().sub(elbowPos).normalize();
 
-        arm.upper.quaternion.copy(limbQuat(upperDir));
+        // The IK above is solved in chest space; the arm hangs off the
+        // clavicle, so take the clavicle's rotation out before storing a local
+        // rotation on the humerus.
+        arm.upper.quaternion.copy(arm.clav.quaternion).invert().multiply(limbQuat(upperDir));
         const foreQuat = limbQuat(foreDir);
-        arm.elbow.quaternion.copy(arm.upper.quaternion.clone().invert().multiply(foreQuat));
+        const chain = arm.clav.quaternion.clone().multiply(arm.upper.quaternion);
+        arm.elbow.quaternion.copy(chain.invert().multiply(foreQuat));
 
         // palm faces the bar: local +Z is the back of the hand
         let desired: THREE.Quaternion;
@@ -937,7 +1097,10 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
           dorsal.normalize();
           desired = frameQuat(foreDir.clone().negate(), dorsal);
         }
-        parentQuat.copy(arm.upper.quaternion).multiply(arm.elbow.quaternion);
+        parentQuat
+          .copy(arm.clav.quaternion)
+          .multiply(arm.upper.quaternion)
+          .multiply(arm.elbow.quaternion);
         arm.hand.group.quaternion.copy(parentQuat.clone().invert().multiply(desired));
         const curl = grip > 0.5 ? 0.92 : 0.2;
         setHandCurl(arm.hand, curl);
@@ -967,7 +1130,14 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
           const dist = pa.distanceTo(pb);
           if (!m.rest) m.rest = Math.max(0.02, dist);
           const ratio = clamp01(1 - dist / m.rest);
-          const bulge = 1 + ratio * 0.45;
+          // Two things make a belly: it shortens (so it thickens) and it is
+          // switched on. A working muscle is visibly rounder than a slack one.
+          m.activation = muscleActivationFor(
+            m.def,
+            anim.gait,
+            cycle + (m.def.side === 'R' ? 0.5 : 0),
+          );
+          const bulge = 1 + ratio * 0.34 + m.activation * 0.14;
           m.mesh.position.copy(pa).add(pb).multiplyScalar(0.5);
           const dir = pb.clone().sub(pa).normalize();
           m.mesh.quaternion.setFromUnitVectors(UP, dir);
@@ -985,8 +1155,10 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
           abduction: deg(elevation * Math.sin(azimuth)),
         };
       };
-      const upperL = new THREE.Vector3(0, -1, 0).applyQuaternion(armL.upper.quaternion);
-      const upperR = new THREE.Vector3(0, -1, 0).applyQuaternion(armR.upper.quaternion);
+      // Chest-space humerus directions from the IK, so the shoulder readings
+      // stay right when the clavicle has rotated.
+      const upperL = leftArm.upperDir.clone();
+      const upperR = rightArm.upperDir.clone();
       const armLimb = limb(upperL, 1);
       const armRLimb = limb(upperR, -1);
       const elbowL = deg(Math.acos(Math.max(-1, Math.min(1, upperL.dot(leftArm.foreDir)))));
@@ -1055,6 +1227,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         if (obj instanceof THREE.Mesh) obj.geometry.dispose();
       });
       allMats.forEach((m) => m.dispose());
+      skin.skeleton.dispose();
       flagMat.dispose();
       flagTexture?.dispose();
     },

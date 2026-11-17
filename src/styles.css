@@ -710,6 +710,59 @@ h3 {
   color: #7d8c99;
 }
 
+.anatomy-muscles {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.anatomy-sub {
+  font-size: 8.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #8fa2b1;
+  margin-bottom: 2px;
+}
+
+.muscle-row {
+  display: grid;
+  grid-template-columns: 92px 1fr 26px;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  color: #c8d4de;
+}
+
+.muscle-row span:first-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.muscle-row em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: #e2b661;
+  font-size: 8.5px;
+}
+
+.muscle-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: #3a2222;
+  overflow: hidden;
+}
+
+.muscle-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #8f2f2c, #d0644f);
+}
+
 .body-modes {
   display: flex;
   flex-wrap: wrap;
