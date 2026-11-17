@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { BodyMode } from '../engine/anatomy';
 import { DEFAULT_SETTINGS } from '../engine/constants';
 import { defaultParams } from '../engine/movements';
 import { buildTimeline, type Timeline } from '../engine/simulate';
@@ -83,6 +84,7 @@ export interface AppState {
   showTrails: boolean;
   showGrid: boolean;
   detail: 'low' | 'high';
+  body: BodyMode;
   history: Plan[];
   future: Plan[];
   toast: string | null;
@@ -110,6 +112,7 @@ export interface AppState {
   toggleTrails: () => void;
   toggleGrid: () => void;
   setDetail: (d: 'low' | 'high') => void;
+  setBody: (b: BodyMode) => void;
 
   newPlan: () => void;
   loadPlan: (plan: Plan, path?: string | null) => void;
@@ -149,6 +152,7 @@ export const useStore = create<AppState>((set, get) => ({
   showTrails: true,
   showGrid: true,
   detail: 'high',
+  body: 'uniform',
   history: [],
   future: [],
   toast: null,
@@ -255,6 +259,7 @@ export const useStore = create<AppState>((set, get) => ({
   toggleTrails: () => set((state) => ({ showTrails: !state.showTrails })),
   toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
   setDetail: (detail) => set({ detail }),
+  setBody: (body) => set({ body }),
 
   newPlan: () =>
     set((state) => {

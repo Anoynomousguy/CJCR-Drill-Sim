@@ -1,3 +1,4 @@
+import { BODY_MODES } from '../engine/anatomy';
 import { UNIFORMS } from '../engine/constants';
 import { useStore } from '../state/store';
 
@@ -12,6 +13,8 @@ export function Inspector() {
   const toggleGrid = useStore((s) => s.toggleGrid);
   const showTrails = useStore((s) => s.showTrails);
   const toggleTrails = useStore((s) => s.toggleTrails);
+  const body = useStore((s) => s.body);
+  const setBody = useStore((s) => s.setBody);
 
   const cadets = timeline.soldiers.filter((s) => s.role === 'cadet' || s.role === 'marker');
   const warnings = dedupe(timeline.warnings.filter((w) => w.severity !== 'info'));
@@ -118,6 +121,26 @@ export function Inspector() {
               </button>
             ))}
           </div>
+        </Section>
+
+        <Section title="Anatomy">
+          <div className="body-modes">
+            {BODY_MODES.map((mode) => (
+              <button
+                key={mode.value}
+                className={`ghost${body === mode.value ? ' on' : ''}`}
+                onClick={() => setBody(mode.value)}
+                title={mode.hint}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+          <p className="muted small anatomy-copy">
+            Uniform, bones and muscles are posed by one joint model: hips, knees, ankles, shoulders, elbows,
+            wrists, cervical and thoracic spine, each clamped to its physiological range. Mark time lifts the
+            thigh to horizontal (90° hip, 90° knee); quick march keeps the knee straight and lifts the foot.
+          </p>
         </Section>
 
         <Section title={`Heights — tallest on the right (${cadets.length})`}>

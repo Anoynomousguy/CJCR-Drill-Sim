@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { GAIT_ANATOMY, type JointReading } from '../engine/anatomy';
 import { UNIFORMS } from '../engine/constants';
 import { sampleTimeline, type Timeline } from '../engine/simulate';
 import { useStore } from '../state/store';
@@ -25,6 +26,9 @@ export function Stage3D() {
   const plan = useStore((s) => s.plan);
   const timeline = useStore((s) => s.timeline);
   const detail = useStore((s) => s.detail);
+  const bodyMode = useStore((s) => s.body);
+  const [anatomy, setAnatomy] = useState<{ name: string; gait: string; angles: JointReading[] } | null>(null);
+  const hudClock = useRef(0);
 
   // --- scene setup (once) -------------------------------------------------
   useEffect(() => {
@@ -166,6 +170,7 @@ export function Stage3D() {
       for (const s of sample.soldiers) {
         const fig = api.figures.get(s.soldier.id);
         if (!fig) continue;
+        fig.setMode(state.body);
         fig.setHeight(s.soldier.height);
         fig.setTransform(s.x, s.z, s.heading);
         fig.animate({
@@ -180,6 +185,14 @@ export function Stage3D() {
           dressing: sample.title.toLowerCase().includes('dress'),
         });
         fig.tick(dt, now / 1000);
+      }
+      if (state.body !== 'uniform' && now - hudClock.current > 160) {
+        hudClock.current = now;
+        const lead = sample.soldiers[0];
+        const fig = lead ? api.figures.get(lead.soldier.id) : undefined;
+        if (lead && fig) {
+          setAnatomy({ name: lead.soldier.name, gait: lead.gait, angles: fig.getAngles() });
+        }
       }
       if (api.preset === 'follow' && sample.soldiers.length) {
         let cx = 0;
@@ -274,9 +287,43 @@ export function Stage3D() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bodyKey]);
 
+  useEffect(() => {
+    const api = apiRef.current;
+    if (!api) return;
+    api.figures.forEach((fig) => fig.setMode(bodyMode));
+    if (bodyMode === 'uniform') setAnatomy(null);
+  }, [bodyMode]);
+
   return (
     <div className="stage3d">
       <div ref={mountRef} className="stage3d-canvas" />
+      {bodyMode !== 'uniform' && anatomy && (
+        <div className="anatomy-hud">
+          <div className="anatomy-head">
+            <span>Anatomy</span>
+            <b>{anatomy.name.replace(' · marker', '')}</b>
+          </div>
+          <ul>
+            {anatomy.angles.slice(0, 12).map((a, i) => {
+              const span = a.max - a.min;
+              const pct = Math.max(0, Math.min(100, ((a.value - a.min) / span) * 100));
+              return (
+                <li key={`${a.joint}-${a.side ?? 'c'}-${i}`}>
+                  <span className="joint-name">
+                    {a.label.replace('flexion', '').replace('plantarflexion', 'plantar')}
+                    {a.side ? ` ${a.side}` : ''}
+                  </span>
+                  <span className="rom">
+                    <i style={{ width: `${pct}%` }} />
+                  </span>
+                  <span className="joint-val">{a.value}°</span>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="anatomy-note">{GAIT_ANATOMY[anatomy.gait as keyof typeof GAIT_ANATOMY]?.note}</p>
+        </div>
+      )}
       <div className="stage3d-tools">
         <div className="seg">
           <button onClick={() => apiRef.current?.frame('front')}>Front</button>

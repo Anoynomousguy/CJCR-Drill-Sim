@@ -622,6 +622,105 @@ h3 {
   color: rgba(200, 212, 222, 0.4);
 }
 
+/* ------------------------------------------------------------ anatomy */
+.anatomy-hud {
+  position: absolute;
+  right: 12px;
+  bottom: 46px;
+  width: 210px;
+  padding: 9px 10px 8px;
+  border-radius: 9px;
+  background: rgba(9, 13, 17, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+  z-index: 3;
+}
+
+.anatomy-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.anatomy-head span {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.anatomy-head b {
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.anatomy-hud ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.anatomy-hud li {
+  display: grid;
+  grid-template-columns: 86px 1fr 28px;
+  align-items: center;
+  gap: 6px;
+}
+
+.joint-name {
+  font-size: 9.5px;
+  color: #9fb0bd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rom {
+  height: 4px;
+  border-radius: 2px;
+  background: #22303a;
+  overflow: hidden;
+}
+
+.rom i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #4a86c8, var(--accent));
+}
+
+.joint-val {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-size: 9.5px;
+  color: #dbe4ec;
+}
+
+.anatomy-note {
+  margin: 7px 0 0;
+  font-size: 9px;
+  line-height: 1.45;
+  color: #7d8c99;
+}
+
+.body-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.anatomy-copy {
+  margin: 7px 0 0;
+  line-height: 1.5;
+}
+
 .stage-caption {
   position: absolute;
   left: 14px;
