@@ -1,9 +1,10 @@
 import { BODY_MODES } from '../engine/anatomy';
 import { UNIFORMS } from '../engine/constants';
-import { auditGaits } from '../engine/pose';
+import { auditGaits } from '../engine/gait';
 import { useStore } from '../state/store';
 
 const AUDIT = auditGaits();
+const DRIFT = Math.max(...AUDIT.reports.map((r) => r.contactDriftCm));
 
 export function Inspector() {
   const plan = useStore((s) => s.plan);
@@ -140,15 +141,15 @@ export function Inspector() {
             ))}
           </div>
           <p className="muted small anatomy-copy">
-            Uniform, bones and muscles are posed by one joint model: hips, knees, ankles, shoulders, elbows,
-            wrists, cervical and thoracic spine, each clamped to its physiological range. Mark time lifts the
-            thigh to horizontal (90° hip, 90° knee); quick march keeps the knee straight and lifts the foot.
+            One joint model poses the uniform, the bones and the muscles. A planted foot stays on the ground:
+            the ankle rolls heel → flat → ball → toe, the toe bends at the MTP joint, the knee is a hinge that
+            never reverses, and the pelvis height is solved from the stance leg. The arms swing opposite the
+            legs, the fingers close around a rifle, and a turn pivots over the inside foot while the head leads.
           </p>
-          <p className={`small ${AUDIT.onTarget === AUDIT.gaits.length && AUDIT.limitBreaches === 0 ? 'ok' : 'muted'}`}>
-            Joint check: {AUDIT.onTarget}/{AUDIT.gaits.length} gaits on the manual targets ·{' '}
-            {AUDIT.limitBreaches === 0
-              ? `0 limit breaches in ${AUDIT.samples * AUDIT.gaits.length} sampled poses`
-              : `${AUDIT.limitBreaches} limit breaches`}
+          <p className={`small ${AUDIT.breaches === 0 ? 'ok' : 'muted'}`}>
+            Contact check: {AUDIT.reports.length} gaits ·{' '}
+            {AUDIT.breaches === 0 ? 'no hinge or joint breaches' : `${AUDIT.breaches} breaches`} · planted-foot
+            drift ≤ {DRIFT.toFixed(2)} cm
           </p>
         </Section>
 

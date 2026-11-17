@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GAIT_ANATOMY, JOINT_LIMITS, clampJoint, type JointName } from './anatomy';
+import { JOINT_LIMITS, clampJoint, type JointName } from './anatomy';
 import {
   ARM_MAX_REACH,
   ARM_MIN_REACH,
@@ -9,18 +9,16 @@ import {
   POSTURE_HANDS,
   RIFLE,
   RIFLE_CARRIAGE,
-  auditGaits,
   carriageDir,
   carriagePoint,
   distance,
   distanceForElbow,
-  gaitPose,
   handIsGripping,
   poseTargets,
   swingHand,
   type Vec3,
 } from './pose';
-import type { Gait, Snapshot, WeaponState } from './types';
+import type { Snapshot, WeaponState } from './types';
 
 const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
   posture: 'attention',
@@ -39,58 +37,11 @@ const shoulder = (side: 'L' | 'R'): Vec3 => [
   0,
 ];
 
-const legPairs = (p: ReturnType<typeof gaitPose>): [JointName, number][] => [
-  ['hipFlexion', p.hipL],
-  ['hipFlexion', p.hipR],
-  ['kneeFlexion', p.kneeL],
-  ['kneeFlexion', p.kneeR],
-  ['anklePlantar', p.ankleL],
-  ['anklePlantar', p.ankleR],
-];
-
-describe('gait anatomy', () => {
-  const manual: Gait[] = ['quick', 'slow', 'double', 'markTime'];
-
-  it('puts the leading leg exactly on the manual target at the top of the swing', () => {
-    for (const gait of manual) {
-      const target = GAIT_ANATOMY[gait];
-      const p = gaitPose(gait, Math.PI / 2);
-      expect(p.hipL, `${gait} hip`).toBeCloseTo(target.hip, 6);
-      expect(p.kneeL, `${gait} knee`).toBeCloseTo(target.knee, 6);
-      expect(p.ankleL, `${gait} ankle`).toBeCloseTo(target.ankle, 6);
-      expect(p.hipR, `${gait} rear hip`).toBeCloseTo(-target.hipBack, 6);
-      expect(p.kneeR, `${gait} rear knee`).toBeCloseTo(target.kneeBack, 6);
-    }
-  });
-
-  it('never leaves the anatomical range at any phase of any gait', () => {
-    for (const gait of Object.keys(GAIT_ANATOMY) as Gait[]) {
-      for (let i = 0; i < 720; i += 1) {
-        const p = gaitPose(gait, (i / 720) * Math.PI * 2);
-        for (const [joint, value] of legPairs(p)) {
-          const limit = JOINT_LIMITS[joint];
-          expect(value, `${gait} ${joint}`).toBeGreaterThanOrEqual(limit.min - 1e-9);
-          expect(value, `${gait} ${joint}`).toBeLessThanOrEqual(limit.max + 1e-9);
-        }
-      }
-    }
-  });
-
+describe('joint ranges', () => {
   it('clamps a joint asked for more than its range', () => {
     for (const [name, limit] of Object.entries(JOINT_LIMITS)) {
       expect(clampJoint(name as JointName, limit.min - 100)).toBe(limit.min);
       expect(clampJoint(name as JointName, limit.max + 100)).toBe(limit.max);
-    }
-  });
-
-  it('passes its own audit', () => {
-    const audit = auditGaits();
-    expect(audit.gaits.length).toBe(Object.keys(GAIT_ANATOMY).length);
-    expect(audit.onTarget).toBe(audit.gaits.length);
-    expect(audit.limitBreaches).toBe(0);
-    for (const gait of audit.gaits) {
-      expect(gait.onTarget, gait.gait).toBe(true);
-      expect(gait.withinLimits, gait.gait).toBe(true);
     }
   });
 });

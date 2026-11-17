@@ -26,10 +26,11 @@ party). Heights are seeded and editable, so the same plan always forms up the sa
   rippling Canadian flag, Army/Sea/Air palettes, low/high detail, orbit plus front, flank,
   overhead and follow cameras.
 - **Anatomy**: the cadet is a bone-by-bone skeleton (skull, mandible, cervical and thoracic
-  spine, ribs, sternum, clavicles, scapulae, pelvis, humerus, radius and ulna, hand bones,
-  femur, patella, tibia, fibula, foot) with a muscle layer over it. Switch the body between
-  uniform, x-ray, skeleton and muscles, and read the live joint angles for the front-right
-  marker in the corner of the stage. Every joint is clamped to its physiological range.
+  spine, ribs, sternum, clavicles, scapulae, pelvis, humerus, radius and ulna, hand and finger
+  bones, femur, patella, tibia, fibula, split foot) with a dynamic muscle layer over it.
+  Switch between uniform, x-ray, skeleton and muscles, and read the live joint angles for the
+  front-right marker in the corner of the stage. Every joint is clamped to its physiological
+  range.
 - **2D plot**: top-down square with headings, trails, start ghosts, colour party and WO
   markers, ruler and fit/zoom.
 - **Programme**: sortable cards with derived timings, duplicate/remove, undo/redo,
@@ -64,29 +65,34 @@ same sampled snapshot, so the 2D plot and the 3D parade can never disagree.
 
 ## Anatomy
 
-Poses are joint motion, not arbitrary rotation. The hip, knee, ankle, shoulder, elbow,
-wrist, cervical spine, thoracic spine and pelvis are each driven through `src/engine/anatomy.ts`,
-which holds their active ranges of motion and the drill targets that sit inside them:
+Poses are joint motion, not arbitrary rotation. `src/engine/gait.ts` is a contact-driven gait
+model: a planted foot is fixed to the ground, the knee is a real two-bone hinge, the ankle
+rolls heel → flat → ball → toe with the MTP joint, and the pelvis height is solved from the
+leg that is carrying the weight. `src/view3d/figure.ts` puts that on the bone rig, with
+articulated fingers and a muscle layer that measures each origin-to-insertion length every
+frame and bulges as it shortens.
 
-| Joint | Range | Drill use |
+The full biology brief — joint types and ranges, the 20 muscles and their actions, the four
+foot rockers, finger mechanics and the sequence of a turn — is in
+[docs/ANATOMY.md](docs/ANATOMY.md).
+
+| Joint | Range | What the model does |
 | --- | --- | --- |
-| Hip flexion | −20° to 120° | 28° quick march, 45° double march, 90° mark time |
-| Knee flexion | 0° to 140° | 0–5° quick and slow march, 90–95° mark time and double |
-| Ankle plantarflexion | −20° to 50° | 18° quick march toe, 30° slow march |
-| Shoulder flexion | −60° to 180° | ±26° arm swing, 90° salute |
-| Shoulder abduction | −45° to 180° | 90° right dress (unarmed), adduction across the body at port |
-| Elbow flexion | 0° to 145° | 22° swing, 90° double march, 45° salute |
+| Hip flexion | −28° to 120° | 39° quick time, 60° double, 56° mark time; 26° extension at toe-off |
+| Knee flexion | 0° to 140° | 2° contact, 15° loading, 36–38° toe-off, 65° swing quick, 92° double |
+| Ankle plantarflexion | −20° to 50° | −11° heel strike, 0° foot flat, 32° toe-off |
+| MTP extension | 0° to 60° | matches the shank at heel-off so the toes stay flat |
+| Shoulder flexion | −60° to 180° | ±20° swing quick, ±30° double; a carrying arm is fixed at its grip |
+| Elbow flexion | 0° to 145° | 18–28° quick, 72–88° double |
 | Cervical rotation | ±80° | 45° eyes right |
-| Thoracic rotation | ±45° | 6° with eyes right, ±3.5° counter-rotation in the step |
+| Pelvic rotation / list | ±45° / ±15° | 4° rotation, 4° list, 2.8 cm sway in quick time |
 
-Knee height is a consequence of those angles rather than a number picked by eye. Mark time
-lifts the thigh to horizontal — 90° of hip flexion and 90° of knee flexion — because the
-manual asks for the thigh parallel to the ground. Quick march instead swings a nearly
-straight leg from the hip (28° of flexion, 4° of knee flexion, 18° of plantarflexion), which
-clears the foot about 30 cm without raising the knee. Double march combines 45° of hip
-flexion with 95° of knee flexion. The neck turns 45° for eyes right while the shoulders stay
-square; the head counter-rotates against the thoracic twist so the gaze stays steady through
-the step.
+At attention the feet are 30° apart, heels together, and the legs are straight because the
+pelvis sits exactly at the height the stance leg can hold. Mark time lifts the thigh to 55°
+with 85° of knee flexion, not an impossible 90/90. During the step the pelvis rotates
+towards the swinging leg and lists over the stance leg; the shoulders counter-rotate; the
+free arm swings opposite its leg. The neck turns 45° for eyes right while the shoulders stay
+square.
 
 ### Rifle and colour carriage
 
@@ -101,17 +107,20 @@ small of the butt. Every grip is checked against the 51 cm reach of the arm and 
 
 ### Checks
 
-`npm test` runs the numeric check over the real rig:
+`npm test` runs 35 checks, including:
 
-- every gait's leading leg exactly on its manual target — 28/4/18 quick, 20/3/30 slow,
-  45/95/10 double, 90/90/12 mark time — with the trailing leg on its recovery angles;
-- 720 sampled phases per gait, all inside the joint ranges, plus every clamp exercised
-  beyond its limit;
-- the figure is built, animated and read back through `getAngles()` for every weapon,
-  colour and gait combination, and each live angle must sit inside its range;
-- every rifle and colour grip must lie on its frame, inside the weapon, and inside the
-  shoulder-to-wrist reach; the live rifle axis must pass within 6 cm of the left shoulder
-  at the slope.
+- every planted foot inside its leg's reach, every knee bending forward, and every sampled
+  joint inside its range of motion at 240 phases per gait;
+- the planted foot's world position held to 0.00 cm through stance — no skating;
+- the live rig read back for all 10 weapon states, 6 colour states and 4 gaits, with each
+  angle inside its limit;
+- the heel → flat → ball → toe sequence, the MTP joint staying flat during heel-off, the
+  mark-time knee lift, and the fingers curling around a carried rifle;
+- the live rifle frames at the order, present and port, and the slope axis passing within
+  6 cm of the left shoulder;
+- the turn's head lead, chest lead and pelvic lag.
+
+`npm run build` compiles the renderer.
 
 ## Notes
 

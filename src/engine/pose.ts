@@ -11,8 +11,8 @@
 // axis. That is what lets the rifle rest in the hollow of the shoulder at the
 // slope while the hands still hold it at the order, the present and the port.
 
-import { GAIT_ANATOMY, JOINT_LIMITS, clampJoint, type JointName } from './anatomy';
-import type { ColourState, Gait, Posture, Snapshot, WeaponState } from './types';
+import { clampJoint } from './anatomy';
+import type { ColourState, Posture, Snapshot, WeaponState } from './types';
 
 export type Vec3 = [number, number, number];
 export type Rot = [number, number, number];
@@ -20,7 +20,7 @@ export type Rot = [number, number, number];
 /** Skeletal landmarks and segment lengths, metres, for the 1.78 m reference body. */
 export const BODY = {
   height: 1.78,
-  hip: 0.92,
+  hip: 0.93,
   spine: 0.07,
   chest: 0.17,
   /** Spine + chest: the chest joint sits this far above the pelvis. */
@@ -118,7 +118,7 @@ export const RIFLE = {
   /** Lee-Enfield No. 1 Mk III: 1.13 m overall. */
   length: 1.13,
   /** Distance from the butt to each grip. */
-  grip: { small: 0.12, balance: 0.52, order: 0.9 },
+  grip: { small: 0.12, balance: 0.52, order: 0.915 },
 } as const;
 
 /**
@@ -284,114 +284,4 @@ export function mixCarriage(a: Carriage | null, b: Carriage | null, u: number): 
     roll: lerp(a.roll ?? 0, b.roll ?? 0, u),
     hands: {},
   };
-}
-
-// ====================================================================== gait
-export interface GaitPose {
-  hipL: number;
-  hipR: number;
-  kneeL: number;
-  kneeR: number;
-  ankleL: number;
-  ankleR: number;
-  trunk: number;
-  shoulderSwing: number;
-  elbow: number;
-}
-
-/**
- * Joint angles for one instant of a gait. The leading leg is the left at
- * phase π/2, and at that instant it sits exactly on the manual's targets:
- * 28° hip / 4° knee / 18° ankle for quick march, 45 / 95 / 10 for double,
- * 90 / 90 / 12 for mark time. The trailing leg takes the recovery values from
- * GAIT_ANATOMY (`hipBack`, `kneeBack`) at phase 3π/2. Everything is clamped to
- * the joint's active range before it is returned.
- */
-export function gaitPose(gait: Gait, phase: number): GaitPose {
-  const g = GAIT_ANATOMY[gait] ?? GAIT_ANATOMY.halt;
-  const s = Math.sin(phase);
-  const leg = (f: number) => {
-    const forward = Math.max(0, f);
-    const hip = clampJoint('hipFlexion', f >= 0 ? g.hip * f : g.hipBack * f);
-    const knee = clampJoint('kneeFlexion', g.knee * forward + g.kneeBack * Math.max(0, -f));
-    const ankle = clampJoint('anklePlantar', g.ankle * (0.7 + 0.3 * forward));
-    return { hip, knee, ankle };
-  };
-  const left = leg(s);
-  const right = leg(-s);
-  return {
-    hipL: left.hip,
-    hipR: right.hip,
-    kneeL: left.knee,
-    kneeR: right.knee,
-    ankleL: left.ankle,
-    ankleR: right.ankle,
-    trunk: g.trunk,
-    shoulderSwing: g.shoulderSwing,
-    elbow: g.elbow,
-  };
-}
-
-/** Phase at which the left leg is at the top of its swing. */
-export const PEAK_PHASE = Math.PI / 2;
-
-export interface GaitAudit {
-  gait: Gait;
-  target: { hip: number; knee: number; ankle: number };
-  model: { hip: number; knee: number; ankle: number };
-  onTarget: boolean;
-  withinLimits: boolean;
-}
-
-export interface AuditResult {
-  gaits: GaitAudit[];
-  samples: number;
-  limitBreaches: number;
-  onTarget: number;
-}
-
-/**
- * Numeric self-check of the gait model: the peak of the swing against the
- * manual target, and every sampled angle against the joint's range of motion.
- */
-export function auditGaits(samples = 240): AuditResult {
-  const gaits: GaitAudit[] = [];
-  let limitBreaches = 0;
-  let onTarget = 0;
-  for (const gait of Object.keys(GAIT_ANATOMY) as Gait[]) {
-    const g = GAIT_ANATOMY[gait];
-    const peak = gaitPose(gait, PEAK_PHASE);
-    let withinLimits = true;
-    for (let i = 0; i < samples; i += 1) {
-      const p = gaitPose(gait, (i / samples) * Math.PI * 2);
-      const pairs: [JointName, number][] = [
-        ['hipFlexion', p.hipL],
-        ['hipFlexion', p.hipR],
-        ['kneeFlexion', p.kneeL],
-        ['kneeFlexion', p.kneeR],
-        ['anklePlantar', p.ankleL],
-        ['anklePlantar', p.ankleR],
-      ];
-      for (const [joint, value] of pairs) {
-        const limit = JOINT_LIMITS[joint];
-        if (value < limit.min - 1e-9 || value > limit.max + 1e-9) {
-          withinLimits = false;
-          limitBreaches += 1;
-        }
-      }
-    }
-    // The values are integers once read off the rig; compare at that resolution.
-    const at = (a: number, b: number) => Math.round(a) === Math.round(b);
-    const onTargetNow =
-      at(peak.hipL, g.hip) && at(peak.kneeL, g.knee) && at(peak.ankleL, g.ankle);
-    if (onTargetNow) onTarget += 1;
-    gaits.push({
-      gait,
-      target: { hip: g.hip, knee: g.knee, ankle: g.ankle },
-      model: { hip: peak.hipL, knee: peak.kneeL, ankle: peak.ankleL },
-      onTarget: onTargetNow,
-      withinLimits,
-    });
-  }
-  return { gaits, samples, limitBreaches, onTarget };
 }
