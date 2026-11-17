@@ -25,6 +25,11 @@ party). Heights are seeded and editable, so the same plan always forms up the sa
   tunic, belt, brassard, beret and cap badge, Lee-Enfield or colour on a pike with a
   rippling Canadian flag, Army/Sea/Air palettes, low/high detail, orbit plus front, flank,
   overhead and follow cameras.
+- **Anatomy**: the cadet is a bone-by-bone skeleton (skull, mandible, cervical and thoracic
+  spine, ribs, sternum, clavicles, scapulae, pelvis, humerus, radius and ulna, hand bones,
+  femur, patella, tibia, fibula, foot) with a muscle layer over it. Switch the body between
+  uniform, x-ray, skeleton and muscles, and read the live joint angles for the front-right
+  marker in the corner of the stage. Every joint is clamped to its physiological range.
 - **2D plot**: top-down square with headings, trails, start ghosts, colour party and WO
   markers, ruler and fit/zoom.
 - **Programme**: sortable cards with derived timings, duplicate/remove, undo/redo,
@@ -56,6 +61,32 @@ src/view3d/        three.js stage and procedural cadet figure
 
 The drill model is declarative: movements become timed segments, and both views render the
 same sampled snapshot, so the 2D plot and the 3D parade can never disagree.
+
+## Anatomy
+
+Poses are joint motion, not arbitrary rotation. The hip, knee, ankle, shoulder, elbow,
+wrist, cervical spine, thoracic spine and pelvis are each driven through `src/engine/anatomy.ts`,
+which holds their active ranges of motion and the drill targets that sit inside them:
+
+| Joint | Range | Drill use |
+| --- | --- | --- |
+| Hip flexion | −20° to 120° | 28° quick march, 45° double march, 90° mark time |
+| Knee flexion | 0° to 140° | 0–5° quick and slow march, 90–95° mark time and double |
+| Ankle plantarflexion | −20° to 50° | 18° quick march toe, 30° slow march |
+| Shoulder flexion | −60° to 180° | ±26° arm swing, 90° salute |
+| Shoulder abduction | 0° to 180° | 90° right dress (unarmed) |
+| Elbow flexion | 0° to 145° | 22° swing, 90° double march, 45° salute |
+| Cervical rotation | ±80° | 45° eyes right |
+| Thoracic rotation | ±45° | 6° with eyes right, ±3.5° counter-rotation in the step |
+
+Knee height is a consequence of those angles rather than a number picked by eye. Mark time
+lifts the thigh to horizontal — 90° of hip flexion and 90° of knee flexion — because the
+manual asks for the thigh parallel to the ground. Quick march instead swings a nearly
+straight leg from the hip (28° of flexion, 4° of knee flexion, 18° of plantarflexion), which
+clears the foot about 30 cm without raising the knee. Double march combines 45° of hip
+flexion with 95° of knee flexion. The neck turns 45° for eyes right while the shoulders stay
+square; the head counter-rotates against the thoracic twist so the gaze stays steady through
+the step.
 
 ## Notes
 
