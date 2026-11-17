@@ -26,6 +26,8 @@ export interface Effect {
   spacing?: Spacing;
   step?: 'normal' | 'out' | 'short';
   turnDeg?: number;
+  /** Required when the angle alone cannot express the side (180°). */
+  turnDir?: 'right' | 'left';
 }
 
 export interface ParamDef {
@@ -136,8 +138,8 @@ const footHalt: MoveDef[] = [
     reference: 'Ch 2 · Turning at the halt',
     kind: 'turn',
     counts: 2,
-    effect: { turnDeg: 90 },
-    help: 'Pivot on the right heel and left toe through 90 degrees to the right. Two counts.',
+    effect: { turnDeg: -90 },
+    help: 'Movement one: pivot 90° right on the right heel and left toe, raising the left heel and right toe, knees braced. Movement two: place the left foot beside the right.',
   },
   {
     type: 'leftTurn',
@@ -147,8 +149,8 @@ const footHalt: MoveDef[] = [
     reference: 'Ch 2 · Turning at the halt',
     kind: 'turn',
     counts: 2,
-    effect: { turnDeg: -90 },
-    help: 'Pivot on the left heel and right toe through 90 degrees to the left. Two counts.',
+    effect: { turnDeg: 90 },
+    help: 'Movement one: pivot 90° left on the left heel and right toe, raising the right heel and left toe, knees braced. Movement two: place the right foot beside the left.',
   },
   {
     type: 'aboutTurn',
@@ -158,8 +160,8 @@ const footHalt: MoveDef[] = [
     reference: 'Ch 2 · Turning at the halt',
     kind: 'turn',
     counts: 2,
-    effect: { turnDeg: 180 },
-    help: 'Pivot to the right through 180 degrees, bringing the left foot alongside. Two counts.',
+    effect: { turnDeg: 180, turnDir: 'right' },
+    help: 'Movement one: pivot 180° right on the right heel and left toe, raising the left heel and right toe, thighs locked. Movement two: place the left foot beside the right.',
   },
   {
     type: 'rightIncline',
@@ -169,8 +171,8 @@ const footHalt: MoveDef[] = [
     reference: 'Ch 2 · Turning and inclining at the halt',
     kind: 'turn',
     counts: 2,
-    effect: { turnDeg: 45 },
-    help: 'Half-turn of 45 degrees to the right. Two counts.',
+    effect: { turnDeg: -45 },
+    help: 'As a right turn, but only 45°: pivot on the right heel and left toe, then place the left foot beside the right.',
   },
   {
     type: 'leftIncline',
@@ -180,8 +182,8 @@ const footHalt: MoveDef[] = [
     reference: 'Ch 2 · Turning and inclining at the halt',
     kind: 'turn',
     counts: 2,
-    effect: { turnDeg: -45 },
-    help: 'Half-turn of 45 degrees to the left. Two counts.',
+    effect: { turnDeg: 45 },
+    help: 'As a left turn, but only 45°: pivot on the left heel and right toe, then place the right foot beside the left.',
   },
   {
     type: 'salute',
@@ -460,8 +462,8 @@ const footMarch: MoveDef[] = [
     reference: 'Ch 3 · About turn on the march',
     kind: 'turn',
     counts: 4,
-    effect: { turnDeg: 180 },
-    help: 'Command on the right foot; turn through the right and step off in the new direction.',
+    effect: { turnDeg: 180, turnDir: 'right' },
+    help: 'Given on the right foot: half pace left, right foot in, pivot 90° right on the ball of the right foot, then 90° on the ball of the left foot, and step off with the left.',
   },
   {
     type: 'rightTurnOnMarch',
@@ -471,8 +473,8 @@ const footMarch: MoveDef[] = [
     reference: 'Ch 3 · Turns on the march',
     kind: 'turn',
     counts: 2,
-    effect: { turnDeg: 90 },
-    help: 'Command on the left foot; half pace, then pivot right and step off.',
+    effect: { turnDeg: -90 },
+    help: 'Given on the left foot: half pace right, cut the arms, pivot 90° right on the ball of the right foot with the left knee up, shoot the right foot forward and continue.',
   },
   {
     type: 'leftTurnOnMarch',
@@ -482,8 +484,8 @@ const footMarch: MoveDef[] = [
     reference: 'Ch 3 · Turns on the march',
     kind: 'turn',
     counts: 2,
-    effect: { turnDeg: -90 },
-    help: 'Command on the right foot; half pace, then pivot left and step off.',
+    effect: { turnDeg: 90 },
+    help: 'Given on the right foot: half pace left, cut the arms, pivot 90° left on the ball of the left foot with the right knee up, shoot the left foot forward and continue.',
   },
   {
     type: 'rightInclineOnMarch',
@@ -493,8 +495,8 @@ const footMarch: MoveDef[] = [
     reference: 'Ch 3 · Inclines on the march',
     kind: 'turn',
     counts: 2,
-    effect: { turnDeg: 45 },
-    help: 'Change direction by 45 degrees to the right without checking the cadence.',
+    effect: { turnDeg: -45 },
+    help: 'As a right turn on the march, but only 45°: check, pivot on the right ball, step off.',
   },
   {
     type: 'leftInclineOnMarch',
@@ -504,8 +506,8 @@ const footMarch: MoveDef[] = [
     reference: 'Ch 3 · Inclines on the march',
     kind: 'turn',
     counts: 2,
-    effect: { turnDeg: -45 },
-    help: 'Change direction by 45 degrees to the left.',
+    effect: { turnDeg: 45 },
+    help: 'As a left turn on the march, but only 45°: check, pivot on the left ball, step off.',
   },
   {
     type: 'wheelRight',
@@ -515,10 +517,10 @@ const footMarch: MoveDef[] = [
     reference: 'Ch 3 · Wheels',
     kind: 'wheel',
     counts: 4,
-    effect: { turnDeg: 90 },
+    effect: { turnDeg: -90 },
     params: [dirParam('right', 'left')],
     defaults: { dir: 'right' },
-    help: 'The directing flank marks time while the remainder march round; each file conforms in succession.',
+    help: 'The right flank is the pivot; the remainder march round it, each file conforming in succession.',
   },
   {
     type: 'wheelLeft',
@@ -528,7 +530,7 @@ const footMarch: MoveDef[] = [
     reference: 'Ch 3 · Wheels',
     kind: 'wheel',
     counts: 4,
-    effect: { turnDeg: -90 },
+    effect: { turnDeg: 90 },
     params: [dirParam('left', 'right')],
     defaults: { dir: 'left' },
     help: 'The left flank is the pivot; the squad wheels through 90 degrees.',
@@ -541,7 +543,7 @@ const footMarch: MoveDef[] = [
     reference: 'Ch 3 · Change direction by forming',
     kind: 'form',
     counts: 6,
-    effect: { turnDeg: 90 },
+    effect: { turnDeg: -90 },
     help: 'The leading person on the directing flank turns right, the remainder incline and the rear ranks wheel into the new line, marking time.',
   },
   {
@@ -552,7 +554,7 @@ const footMarch: MoveDef[] = [
     reference: 'Ch 3 · Change direction by forming',
     kind: 'form',
     counts: 6,
-    effect: { turnDeg: -90 },
+    effect: { turnDeg: 90 },
     help: 'The squad changes front to the left while keeping its formation.',
   },
   {

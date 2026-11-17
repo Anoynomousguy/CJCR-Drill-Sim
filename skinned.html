@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Skinned cadet — spike</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #0b1114;
+        color: #e6ece6;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #viewer {
+        position: fixed;
+        inset: 0;
+      }
+      .hud {
+        position: fixed;
+        left: 22px;
+        bottom: 20px;
+        pointer-events: none;
+        text-shadow: 0 1px 2px #000;
+      }
+      .hud h1 {
+        margin: 0 0 3px;
+        font-size: 15px;
+        font-weight: 650;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .hud p {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #a7b5ac;
+      }
+      .note {
+        position: fixed;
+        right: 22px;
+        top: 20px;
+        max-width: 260px;
+        font-size: 11px;
+        line-height: 1.55;
+        color: #97a59b;
+        text-align: right;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="viewer"></div>
+    <div class="hud">
+      <h1>Skinned cadet — spike</h1>
+      <p>Blender 4.5 · rigged, automatic weights · 3.6k verts · walk clip</p>
+      <p>Drag to orbit. Not yet wired into the parade rig.</p>
+    </div>
+    <div class="note">
+      Built by <code>scripts/blender/make_cadet.py</code>. The mesh is voxel-remeshed
+      from blended volumes, so shoulders, hips and wrists bend as one surface.
+    </div>
+    <script type="module" src="/src/skinned.ts"></script>
+  </body>
+</html>

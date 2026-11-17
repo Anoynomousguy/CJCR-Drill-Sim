@@ -32,6 +32,7 @@ import {
   type FootTarget,
   type GaitTargets,
 } from '../engine/gait';
+import { turnFootwork, type TurnFootwork, type TurnPlan } from '../engine/turn';
 import type { Snapshot } from '../engine/types';
 
 type V3 = Vec3;
@@ -81,6 +82,8 @@ export interface FigureAnim {
   eyes: Snapshot['eyes'];
   headdress: Snapshot['headdress'];
   dressing?: boolean;
+  /** A commanded turn's manual breakdown; omit for free-standing turns. */
+  turn?: { plan: TurnPlan; progress: number };
 }
 
 export interface FigureFoot {
@@ -97,8 +100,10 @@ export interface FigurePose {
   left: FigureFoot;
   right: FigureFoot;
   fingers: { left: number; right: number };
-  /** Heading change in degrees per second; + turns right. */
+  /** Heading change in degrees per second; + is a left turn in this frame. */
   turn: number;
+  turnPhase?: TurnFootwork['phase'];
+  pivot?: 'L' | 'R';
   /** 0 = standing, 1 = full gait. */
   walking: number;
 }
@@ -723,7 +728,9 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         turnTravel *= Math.exp(-dt * 6);
         if (Math.abs(turnTravel) < 0.01) turnTravel = 0;
       }
-      const turn = turnPose(turnRate);
+      const commanded = anim.turn ? turnFootwork(anim.turn.plan, anim.turn.progress) : null;
+      const freeTurn = turnPose(turnRate);
+      const leads = commanded ?? freeTurn;
       // 0 at the start of a turn, 1 at 45° through a 90° turn, 0 again at the
       // end: the outside foot steps across and plants, the inside heel lifts
       // and comes down. A turn is a step, not a lift held for its duration.
@@ -747,21 +754,45 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       // foot overlays for the pivot
       const footL: FootTarget = { ...g.left };
       const footR: FootTarget = { ...g.right };
-      if (turn.magnitude > 0.01 && turnStep > 0.001) {
-        const heel = turn.insideHeel * turnStep * turnWeight;
-        const pivot = turn.inside === 'L' ? footL : footR;
-        const step = turn.inside === 'L' ? footR : footL;
+      if (commanded) {
+        // The command supplies the exact foot: heel/toe pivot, close, check
+        // and step. No generic step-around is layered on top of it.
+        footL.pitch += commanded.left.pitch;
+        footL.y += commanded.left.lift;
+        footL.yaw += commanded.left.yaw;
+        footL.planted = commanded.left.planted;
+        footL.contact = commanded.left.contact;
+        footR.pitch += commanded.right.pitch;
+        footR.y += commanded.right.lift;
+        footR.yaw += commanded.right.yaw;
+        footR.planted = commanded.right.planted;
+        footR.contact = commanded.right.contact;
+      } else if (freeTurn.magnitude > 0.01 && turnStep > 0.001) {
+        const heel = freeTurn.insideHeel * turnStep * turnWeight;
+        const pivot = freeTurn.inside === 'L' ? footL : footR;
+        const step = freeTurn.inside === 'L' ? footR : footL;
         pivot.pitch += heel;
         pivot.y += LEG.ballLever * Math.sin(rad(heel));
-        pivot.yaw += turn.insideYaw * turnStep * turnWeight;
-        step.y += turn.outsideLift * turnStep * turnWeight;
+        pivot.yaw += freeTurn.insideYaw * turnStep * turnWeight;
+        step.y += freeTurn.outsideLift * turnStep * turnWeight;
         step.z += 0.05 * turnStep * turnWeight;
-        step.yaw += turn.outsideYaw * turnStep * turnWeight;
+        step.yaw += freeTurn.outsideYaw * turnStep * turnWeight;
         if (turnStep > 0.2) step.planted = false;
       }
       liveL = footL;
       liveR = footR;
-      liveHipY = g.hipY;
+      // A heel or ball raise lifts the ankle, and the body must rise with it or
+      // the knee absorbs the whole lift. That is what made a braced pivot look
+      // like a high step: a 1.5 cm ankle lift became a 32-degree knee bend on a
+      // nearly straight leg. Rising by the average planted-foot lift keeps both
+      // stance legs close to extension while the pivot foot carries the body.
+      const plantedFeet = commanded
+        ? [commanded.left, commanded.right].filter((foot) => foot.planted)
+        : [];
+      const stanceRise = plantedFeet.length
+        ? plantedFeet.reduce((sum, foot) => sum + foot.lift, 0) / plantedFeet.length
+        : 0;
+      liveHipY = g.hipY + stanceRise;
 
       // --- posture, blended across the movement
       const fromSpine = DRILL_SPINE[anim.from.posture] ?? DRILL_SPINE.attention;
@@ -770,11 +801,11 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       const spThoracic = lerp(fromSpine.thoracic, toSpine.thoracic, u);
       const spCervical = lerp(fromSpine.cervical, toSpine.cervical, u);
       const lean = clampJoint('lumbarFlexion', g.lean) * blend;
-      const pelvisYaw = -g.yaw * blend + turn.pelvisYaw * turnWeight;
-      const list = g.list * blend + turn.list * turnWeight;
+      const pelvisYaw = -g.yaw * blend + leads.pelvisYaw * turnWeight;
+      const list = g.list * blend + leads.list * turnWeight;
 
       pelvis.rotation.set(
-        rad(clampJoint('lumbarFlexion', lean * 0.35 + spLumbar * 0.3 + turn.lean * 0.2)),
+        rad(clampJoint('lumbarFlexion', lean * 0.35 + spLumbar * 0.3 + leads.lean * 0.2)),
         rad(pelvisYaw),
         rad(list),
       );
@@ -788,7 +819,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         ? new THREE.Vector3(-LEG.hipX, 0, 0).applyQuaternion(pelvis.quaternion).y
         : 0;
       const listRise = Math.max(0, riseL, riseR);
-      pelvis.position.set(g.sway * blend + turn.shift * turnWeight, g.hipY - listRise, 0);
+      pelvis.position.set(g.sway * blend + leads.shift * turnWeight, liveHipY - listRise, 0);
       spine.rotation.set(
         rad(clampJoint('lumbarFlexion', lean * 0.35 + spLumbar * 0.4)),
         rad(-pelvisYaw * 0.15),
@@ -798,7 +829,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       // turn it leads: a body turns its shoulders before its hips.
       chest.rotation.set(
         rad(lean * 0.2 + spThoracic * 0.3),
-        rad(g.yaw * 1.05 * blend + turn.chestYaw * turnWeight),
+        rad(g.yaw * 1.05 * blend + leads.chestYaw * turnWeight),
         rad(-list * 0.3),
       );
 
@@ -807,12 +838,12 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       const cervical = eyes === 'right' ? -EYES_RIGHT.cervical : eyes === 'left' ? EYES_RIGHT.cervical : 0;
       neck.rotation.set(
         rad(spCervical * 0.45),
-        rad(cervical * 0.55 + turn.headYaw * 0.55 * turnWeight),
+        rad(cervical * 0.55 + leads.headYaw * 0.55 * turnWeight),
         rad(-list * 0.2),
       );
       head.rotation.set(
         rad(spCervical * 0.35),
-        rad(cervical * 0.45 - g.yaw * 0.35 + turn.headYaw * 0.45 * turnWeight),
+        rad(cervical * 0.45 - g.yaw * 0.35 + leads.headYaw * 0.45 * turnWeight),
         rad(-list * 0.25),
       );
       beret.visible = anim.headdress === 'worn';
@@ -848,8 +879,11 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         lerp(a.handR[2], b.handR[2], u),
       ];
       if (blend > 0.01) {
-        if (gripL < 0.5) handL = swingHand(handL, g.armL * blend, Math.max(4, g.elbowL));
-        if (gripR < 0.5) handR = swingHand(handR, g.armR * blend, Math.max(4, g.elbowR));
+        // On a marching turn the manual cuts both arms to the sides through
+        // the pivot; they pick the swing up again on the step-out.
+        const swing = 1 - (commanded?.armCut ?? 0) * 0.9;
+        if (gripL < 0.5) handL = swingHand(handL, g.armL * blend * swing, Math.max(4, g.elbowL));
+        if (gripR < 0.5) handR = swingHand(handR, g.armR * blend * swing, Math.max(4, g.elbowR));
       }
 
       const armAxisL = carrier ? new THREE.Vector3(...carrier.dir).normalize() : new THREE.Vector3(0, 1, 0);
@@ -999,6 +1033,8 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         },
         fingers: { left: curlL, right: curlR },
         turn: turnRate,
+        turnPhase: commanded?.phase,
+        pivot: anim.turn?.plan.pivot,
         walking: blend,
       };
     },

@@ -183,6 +183,7 @@ export function Stage3D() {
           eyes: sample.u > 0.45 ? sample.to.eyes : sample.from.eyes,
           headdress: sample.u > 0.5 ? sample.to.headdress : sample.from.headdress,
           dressing: sample.title.toLowerCase().includes('dress'),
+          turn: sample.turn,
         });
         fig.tick(dt, now / 1000);
       }

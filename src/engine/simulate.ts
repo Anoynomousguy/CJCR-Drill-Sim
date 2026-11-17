@@ -10,6 +10,7 @@ import {
 } from './constants';
 import { buildSoldiers, initialFrame } from './dressing';
 import { getMoveDef, INITIAL_SNAPSHOT } from './movements';
+import { makeTurnPlan, turnHeadingAt, type TurnPlan } from './turn';
 import type { Frame, Gait, Plan, Snapshot, Soldier } from './types';
 import { clamp01, deg2rad, lerp, smoothstep } from './util';
 
@@ -39,9 +40,10 @@ export interface Segment {
   toFrame: Frame;
   fromLocal: LocalMap;
   toLocal: LocalMap;
-  mode: 'static' | 'linear' | 'arc';
+  mode: 'static' | 'linear' | 'arc' | 'turn';
   pivot?: { x: number; z: number };
   angle?: number;
+  turn?: TurnPlan;
   stride0: Record<string, number>;
   scope: 'all' | 'colourParty';
 }
@@ -72,6 +74,7 @@ export interface Sample {
   to: Snapshot;
   u: number;
   marchPhase: number;
+  turn?: { plan: TurnPlan; progress: number };
   soldiers: SampledSoldier[];
 }
 
@@ -207,6 +210,7 @@ export function buildTimeline(plan: Plan): Timeline {
     let mode: Segment['mode'] = 'static';
     let pivot: { x: number; z: number } | undefined;
     let angle: number | undefined;
+    let turn: TurnPlan | undefined;
     let duration = def.counts * BEAT;
     let scope: Segment['scope'] = def.scope ?? 'all';
 
@@ -231,8 +235,25 @@ export function buildTimeline(plan: Plan): Timeline {
       }
       case 'turn': {
         const deg = eff.turnDeg ?? 90;
-        toFrame.heading = frame.heading + deg2rad(deg);
-        duration = Math.max(def.counts * BEAT, 0.9);
+        const context = fromSnapshot.gait === 'halt' ? 'halt' : Math.abs(deg) >= 170 ? 'aboutMarch' : 'march';
+        // The command, not the sign of the angle, names the direction.
+        turn = makeTurnPlan(context, deg, eff.turnDir ?? (deg < 0 ? 'right' : 'left'));
+        toFrame.heading = frame.heading + turn.angle;
+        if (context === 'halt') {
+          // Each person turns on the spot. The frame's local coordinates are
+          // counter-rotated so the new facing describes the same world slots;
+          // without this the whole parade orbits the frame origin.
+          const cos = Math.cos(turn.angle);
+          const sin = Math.sin(turn.angle);
+          const rotated: LocalMap = {};
+          for (const s of soldiers) {
+            const l = fromLocal[s.id] ?? { lx: s.lx, lz: s.lz };
+            rotated[s.id] = { lx: l.lx * cos - l.lz * sin, lz: l.lx * sin + l.lz * cos };
+          }
+          toLocal = rotated;
+        }
+        duration = Math.max(def.counts * BEAT, context === 'halt' ? 0.9 : 1.4);
+        mode = 'turn';
         break;
       }
       case 'pace': {
@@ -378,7 +399,13 @@ export function buildTimeline(plan: Plan): Timeline {
 
     for (const s of soldiers) {
       let travelled = 0;
-      if (mode === 'arc' && pivot && angle !== undefined) {
+      if (mode === 'turn' && turn) {
+        if (turn.context !== 'halt') {
+          const l = fromLocal[s.id] ?? { lx: s.lx, lz: s.lz };
+          const w = worldOf(fromFrame, l.lx, l.lz);
+          travelled = Math.abs(turn.angle) * Math.hypot(w.x - fromFrame.x, w.z - fromFrame.z);
+        }
+      } else if (mode === 'arc' && pivot && angle !== undefined) {
         const l = fromLocal[s.id] ?? { lx: s.lx, lz: s.lz };
         const w = worldOf(fromFrame, l.lx, l.lz);
         travelled = Math.abs(angle) * Math.hypot(w.x - pivot.x, w.z - pivot.z);
@@ -406,6 +433,7 @@ export function buildTimeline(plan: Plan): Timeline {
       mode,
       pivot,
       angle,
+      turn,
       stride0,
       scope,
     });
@@ -499,8 +527,20 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
   const raw = clamp01((t - seg.start) / span);
   const u = smoothstep(raw);
 
+  const turnProgress = seg.turn ? turnHeadingAt(seg.turn, raw) : 0;
+  const bodyHeading = seg.turn
+    ? seg.fromFrame.heading + seg.turn.angle * turnProgress
+    : seg.fromFrame.heading;
+
   let frame: Frame = seg.fromFrame;
-  if (seg.mode === 'arc' && seg.pivot && seg.angle !== undefined) {
+  if (seg.mode === 'turn' && seg.turn) {
+    // Halt turns keep every person's feet in the same world slot and only
+    // change the facing. Marching turns wheel the formation about its centre.
+    frame =
+      seg.turn.context === 'halt'
+        ? seg.fromFrame
+        : { x: seg.fromFrame.x, z: seg.fromFrame.z, heading: bodyHeading };
+  } else if (seg.mode === 'arc' && seg.pivot && seg.angle !== undefined) {
     const a = seg.angle * raw;
     const p = rotateAbout({ x: seg.fromFrame.x, z: seg.fromFrame.z }, seg.pivot, a);
     frame = { x: p.x, z: p.z, heading: seg.fromFrame.heading + seg.angle * raw };
@@ -515,14 +555,19 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
   const soldiers: SampledSoldier[] = timeline.soldiers.map((s) => {
     const a = seg.fromLocal[s.id] ?? { lx: s.lx, lz: s.lz };
     const b = seg.toLocal[s.id] ?? { lx: s.lx, lz: s.lz };
-    const lx = lerp(a.lx, b.lx, raw);
-    const lz = lerp(a.lz, b.lz, raw);
+    const fixed = seg.mode === 'turn' && seg.turn?.context === 'halt';
+    const lx = fixed ? a.lx : lerp(a.lx, b.lx, raw);
+    const lz = fixed ? a.lz : lerp(a.lz, b.lz, raw);
     const w = worldOf(frame, lx, lz);
     const isColourParty = s.role === 'colourOfficer' || s.role === 'colourEscort' || s.role === 'wo';
     const gait: Gait =
       seg.scope === 'colourParty' && !isColourParty ? seg.fromSnapshot.gait : seg.toSnapshot.gait;
     const travelled =
-      seg.mode === 'arc' && seg.pivot && seg.angle !== undefined
+      seg.mode === 'turn' && seg.turn
+        ? seg.turn.context === 'halt'
+          ? 0
+          : Math.abs(seg.turn.angle * turnProgress) * Math.hypot(w.x - seg.fromFrame.x, w.z - seg.fromFrame.z)
+        : seg.mode === 'arc' && seg.pivot && seg.angle !== undefined
         ? Math.abs(seg.angle * raw) * Math.hypot(w.x - seg.pivot.x, w.z - seg.pivot.z)
         : seg.mode === 'linear'
           ? distanceTravelled(seg.fromFrame, seg.fromLocal, frame, { [s.id]: { lx, lz } }, s.id)
@@ -531,7 +576,7 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
       soldier: s,
       x: w.x,
       z: w.z,
-      heading: frame.heading + roleHeadingOffset(s.role, seg.toSnapshot.gait),
+      heading: bodyHeading + roleHeadingOffset(s.role, seg.toSnapshot.gait),
       stride: (seg.stride0[s.id] ?? 0) + travelled,
       gait,
     };
@@ -546,6 +591,7 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
     to: seg.toSnapshot,
     u,
     marchPhase: 0,
+    turn: seg.turn ? { plan: seg.turn, progress: raw } : undefined,
     soldiers,
   };
 }

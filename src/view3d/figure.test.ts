@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { UNIFORMS } from '../engine/constants';
 import { LEG, gaitTargets } from '../engine/gait';
 import { BODY, RIFLE_CARRIAGE } from '../engine/pose';
+import { makeTurnPlan, turnHeadingAt } from '../engine/turn';
 import type { ColourState, Snapshot, WeaponState } from '../engine/types';
 import { createFigure, type Figure, type FigurePalette } from './figure';
 
@@ -249,6 +250,78 @@ describe('turning', () => {
       });
     }
     expect(Math.abs(fig.getPose().turn)).toBeLessThan(turning * 0.1);
+    fig.dispose();
+  });
+
+  it('executes the halt turn as a heel-toe pivot and then closes the foot', () => {
+    const fig = rig();
+    fig.setTransform(0, 0, 0);
+    pose(fig, BASE, 0, 0, 5);
+    const plan = makeTurnPlan('halt', 90, 'right');
+    const run = (p: number) => {
+      fig.setTransform(0, 0, plan.angle * turnHeadingAt(plan, p));
+      fig.animate({
+        from: BASE,
+        to: BASE,
+        u: 1,
+        gait: 'halt',
+        stride: 0,
+        time: 1 + p,
+        eyes: 'front',
+        headdress: 'worn',
+        turn: { plan, progress: p },
+      });
+      return fig.getPose();
+    };
+
+    const pivot = run(0.2);
+    expect(pivot.pivot).toBe('R');
+    expect(pivot.turnPhase).toBe('pivot');
+    expect(pivot.right.pitch).toBeLessThan(-2);
+    expect(pivot.right.planted).toBe(true);
+    expect(pivot.left.pitch).toBeGreaterThan(2);
+    expect(pivot.left.planted).toBe(true);
+    // The body rises onto the heel/ball instead of the knees folding under a
+    // lift. The pivot leg stays close to extension; the outside leg bends only
+    // as much as the raised heel requires.
+    expect(pivot.hipY).toBeGreaterThan(0.938);
+    expect(pivot.right.knee).toBeLessThan(14);
+    expect(pivot.left.knee).toBeLessThan(28);
+
+    const close = run(0.84);
+    expect(close.left.planted).toBe(false);
+    expect(close.left.ankle[1]).toBeGreaterThan(LEG.ankle);
+
+    const done = run(1);
+    expect(done.left.planted && done.right.planted).toBe(true);
+    expect(Math.abs(done.left.pitch)).toBeLessThan(0.5);
+    expect(fig.group.rotation.y).toBeCloseTo(plan.angle, 6);
+    fig.dispose();
+  });
+
+  it('lifts the outside foot on the ball of the inside foot on a march turn', () => {
+    const fig = rig();
+    fig.setTransform(0, 0, 0);
+    pose(fig, { ...BASE, gait: 'quick' }, 0.3, 0, 5);
+    const plan = makeTurnPlan('march', 90, 'right');
+    const p = 0.48;
+    fig.setTransform(0, 0, plan.angle * turnHeadingAt(plan, p));
+    fig.animate({
+      from: { ...BASE, gait: 'quick' },
+      to: { ...BASE, gait: 'quick' },
+      u: 1,
+      gait: 'quick',
+      stride: 0.3,
+      time: 2,
+      eyes: 'front',
+      headdress: 'worn',
+      turn: { plan, progress: p },
+    });
+    const poseNow = fig.getPose();
+    expect(poseNow.turnPhase).toBe('pivot');
+    expect(poseNow.right.planted).toBe(true);
+    expect(poseNow.left.planted).toBe(false);
+    expect(poseNow.left.ankle[1]).toBeGreaterThan(LEG.ankle + 0.03);
     fig.dispose();
   });
 });
