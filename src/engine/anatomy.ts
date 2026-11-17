@@ -31,7 +31,7 @@ export const JOINT_LIMITS = {
   kneeFlexion: { label: 'Knee flexion', min: 0, max: 140, positive: 'flexion', negative: '' },
   anklePlantar: { label: 'Ankle plantarflexion', min: -20, max: 50, positive: 'plantarflexion', negative: 'dorsiflexion' },
   shoulderFlexion: { label: 'Shoulder flexion', min: -60, max: 180, positive: 'flexion', negative: 'extension' },
-  shoulderAbduction: { label: 'Shoulder abduction', min: 0, max: 180, positive: 'abduction', negative: '' },
+  shoulderAbduction: { label: 'Shoulder abduction', min: -45, max: 180, positive: 'abduction', negative: 'adduction' },
   elbowFlexion: { label: 'Elbow flexion', min: 0, max: 145, positive: 'flexion', negative: 'hyperextension' },
   wristExtension: { label: 'Wrist extension', min: -80, max: 70, positive: 'extension', negative: 'flexion' },
   cervicalRotation: { label: 'Cervical rotation', min: -80, max: 80, positive: 'right', negative: 'left' },
@@ -59,19 +59,27 @@ export interface JointReading {
 
 export function reading(joint: JointName, value: number, side?: 'L' | 'R'): JointReading {
   const limit = JOINT_LIMITS[joint];
+  const rounded = Math.round(value);
   return {
     joint,
     label: limit.label,
     side,
-    value: Math.round(value),
+    // Normalise negative zero so a neutral joint always reads 0.
+    value: rounded === 0 ? 0 : rounded,
     min: limit.min,
     max: limit.max,
   };
 }
 
 export interface DrillAnatomy {
+  /** Forward hip flexion at the top of the swing. */
   hip: number;
+  /** Rear hip extension at the opposite extreme. */
+  hipBack: number;
+  /** Knee flexion of the leading leg at the top of the swing. */
   knee: number;
+  /** Knee flexion of the trailing leg as it leaves the ground. */
+  kneeBack: number;
   ankle: number;
   /** Shoulder swing either side of the vertical, forward positive. */
   shoulderSwing: number;
@@ -90,7 +98,9 @@ export interface DrillAnatomy {
 export const GAIT_ANATOMY: Record<Gait, DrillAnatomy> = {
   halt: {
     hip: 0,
+    hipBack: 0,
     knee: 0,
+    kneeBack: 0,
     ankle: 0,
     shoulderSwing: 0,
     elbow: 0,
@@ -99,7 +109,9 @@ export const GAIT_ANATOMY: Record<Gait, DrillAnatomy> = {
   },
   quick: {
     hip: 28,
+    hipBack: 14,
     knee: 4,
+    kneeBack: 26,
     ankle: 18,
     shoulderSwing: 26,
     elbow: 22,
@@ -108,7 +120,9 @@ export const GAIT_ANATOMY: Record<Gait, DrillAnatomy> = {
   },
   slow: {
     hip: 20,
+    hipBack: 10,
     knee: 3,
+    kneeBack: 18,
     ankle: 30,
     shoulderSwing: 14,
     elbow: 16,
@@ -117,7 +131,9 @@ export const GAIT_ANATOMY: Record<Gait, DrillAnatomy> = {
   },
   double: {
     hip: 45,
+    hipBack: 20,
     knee: 95,
+    kneeBack: 60,
     ankle: 10,
     shoulderSwing: 45,
     elbow: 90,
@@ -126,7 +142,9 @@ export const GAIT_ANATOMY: Record<Gait, DrillAnatomy> = {
   },
   markTime: {
     hip: 90,
+    hipBack: 0,
     knee: 90,
+    kneeBack: 4,
     ankle: 12,
     shoulderSwing: 22,
     elbow: 22,

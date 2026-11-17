@@ -1,6 +1,9 @@
 import { BODY_MODES } from '../engine/anatomy';
 import { UNIFORMS } from '../engine/constants';
+import { auditGaits } from '../engine/pose';
 import { useStore } from '../state/store';
+
+const AUDIT = auditGaits();
 
 export function Inspector() {
   const plan = useStore((s) => s.plan);
@@ -140,6 +143,12 @@ export function Inspector() {
             Uniform, bones and muscles are posed by one joint model: hips, knees, ankles, shoulders, elbows,
             wrists, cervical and thoracic spine, each clamped to its physiological range. Mark time lifts the
             thigh to horizontal (90° hip, 90° knee); quick march keeps the knee straight and lifts the foot.
+          </p>
+          <p className={`small ${AUDIT.onTarget === AUDIT.gaits.length && AUDIT.limitBreaches === 0 ? 'ok' : 'muted'}`}>
+            Joint check: {AUDIT.onTarget}/{AUDIT.gaits.length} gaits on the manual targets ·{' '}
+            {AUDIT.limitBreaches === 0
+              ? `0 limit breaches in ${AUDIT.samples * AUDIT.gaits.length} sampled poses`
+              : `${AUDIT.limitBreaches} limit breaches`}
           </p>
         </Section>
 

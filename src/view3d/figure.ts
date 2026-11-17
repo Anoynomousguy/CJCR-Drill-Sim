@@ -9,98 +9,43 @@ import {
   type BodyMode,
   type JointReading,
 } from '../engine/anatomy';
-import type { ColourState, Posture, Snapshot, WeaponState } from '../engine/types';
+import {
+  ARM_MAX_REACH,
+  ARM_MIN_REACH,
+  BODY,
+  DRESS_HANDS,
+  PIKE,
+  STRIDE_LENGTH,
+  gaitPose,
+  handIsGripping,
+  mixCarriage,
+  poseTargets,
+  swingHand,
+  type Carriage,
+  type Rot,
+  type Vec3,
+} from '../engine/pose';
+import type { Snapshot } from '../engine/types';
 
-/** Pose targets are in torso space: origin at the hips, +Y up, +Z forward. */
-type V3 = [number, number, number];
-type Rot = [number, number, number];
-
-interface PoseTargets {
-  handL: V3;
-  handR: V3;
-  torso: Rot;
-  head: Rot;
-  weapon: Rot | null;
-  colour: Rot | null;
-}
-
-const WEAPON_HANDS: Record<WeaponState, { left?: V3; right: V3; rot: Rot }> = {
-  none: { right: [-0.24, -0.1, 0.02], rot: [0, 0, 0] },
-  order: { right: [-0.245, -0.16, 0.07], rot: [0, 0, 4] },
-  slope: { right: [-0.225, -0.04, 0.03], left: [0.02, 0.21, 0.19], rot: [6, 0, 30] },
-  present: { right: [-0.07, -0.02, 0.31], left: [0.07, 0.15, 0.33], rot: [0, 0, 0] },
-  port: { right: [-0.16, 0.0, 0.25], left: [0.02, 0.18, 0.28], rot: [-22, 0, 32] },
-  inspection: { right: [-0.16, 0.0, 0.25], left: [0.02, 0.18, 0.28], rot: [-22, 0, 26] },
-  trail: { right: [-0.245, -0.12, 0.11], rot: [62, 0, 6] },
-  grounded: { right: [-0.245, -0.1, 0.06], rot: [0, 0, 0] },
-  reversed: { right: [-0.2, -0.02, 0.15], left: [-0.13, 0.02, 0.19], rot: [180, 0, 4] },
-  sling: { right: [-0.2, 0.02, 0.11], rot: [150, 0, 26] },
-};
-
-const COLOUR_HANDS: Record<ColourState, { left?: V3; right: V3; rot: Rot }> = {
-  none: { right: [-0.24, -0.1, 0.02], rot: [0, 0, 0] },
-  order: { right: [-0.22, -0.06, 0.1], rot: [2, 0, 3] },
-  carry: { right: [-0.1, 0.12, 0.25], left: [-0.01, -0.02, 0.21], rot: [0, 0, 0] },
-  slope: { right: [-0.22, -0.02, 0.04], left: [-0.02, 0.2, 0.19], rot: [10, 0, 40] },
-  dip: { right: [-0.06, 0.12, 0.33], left: [-0.12, 0.0, 0.29], rot: [72, 0, 10] },
-  letFly: { right: [-0.16, 0.14, 0.21], left: [-0.02, 0.02, 0.17], rot: [12, 0, 34] },
-};
-
-const POSTURE_HANDS: Record<Posture, { left: V3; right: V3; torso?: Rot }> = {
-  attention: { left: [0.235, -0.1, 0.02], right: [-0.235, -0.1, 0.02] },
-  standAtEase: { left: [0.06, -0.03, -0.18], right: [-0.06, -0.03, -0.18] },
-  standEasy: { left: [0.1, -0.06, -0.16], right: [-0.1, -0.06, -0.16], torso: [2, 0, 0] },
-  salute: { left: [0.235, -0.1, 0.02], right: [-0.105, 0.585, 0.17] },
-};
-
-function targetsFor(snapshot: Snapshot, hasRifle: boolean, hasColour: boolean): PoseTargets {
-  const posture = POSTURE_HANDS[snapshot.posture] ?? POSTURE_HANDS.attention;
-  const base: PoseTargets = {
-    handL: posture.left,
-    handR: posture.right,
-    torso: posture.torso ?? [0, 0, 0],
-    head: [0, 0, 0],
-    weapon: null,
-    colour: null,
-  };
-  if (hasColour && snapshot.colour !== 'none') {
-    const c = COLOUR_HANDS[snapshot.colour];
-    base.handR = c.right;
-    if (c.left) base.handL = c.left;
-    base.colour = c.rot;
-    if (snapshot.posture === 'salute') base.handR = posture.right;
-    return base;
-  }
-  if (hasRifle && snapshot.weapon !== 'none') {
-    const w = WEAPON_HANDS[snapshot.weapon];
-    base.handR = w.right;
-    if (w.left) base.handL = w.left;
-    base.weapon = w.rot;
-    if (snapshot.posture === 'salute' && snapshot.weapon === 'slope') base.handR = posture.right;
-    return base;
-  }
-  return base;
-}
+type V3 = Vec3;
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const lerpV = (a: V3, b: V3, t: number): V3 => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 const rad = (deg: number) => (deg * Math.PI) / 180;
 const deg = (v: number) => (v * 180) / Math.PI;
-const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
 const SKIN = '#c79a72';
 
-/** Skeletal landmarks for a 1.78 m body. */
-const HIP = 0.92;
-const SPINE_Y = 0.07;
-const CHEST_Y = 0.17; // relative to spine → 1.16 m
-const SHOULDER_Y = 0.24; // relative to chest → 1.40 m
-const NECK_Y = 0.31;
-const HEAD_Y = 0.06;
-const FEMUR = 0.45;
-const TIBIA = 0.42;
-const HUMERUS = 0.27;
-const FOREARM = 0.245;
+const HIP = BODY.hip;
+const SPINE_Y = BODY.spine;
+const CHEST_Y = BODY.chest;
+const SHOULDER_Y = BODY.shoulderY;
+const NECK_Y = BODY.neck;
+const HEAD_Y = BODY.head;
+const FEMUR = BODY.femur;
+const TIBIA = BODY.tibia;
+const HUMERUS = BODY.humerus;
+const FOREARM = BODY.forearm;
 
 export interface FigurePalette {
   tunic: string;
@@ -137,12 +82,23 @@ export interface Figure {
   setHeight: (h: number) => void;
   setMode: (mode: BodyMode) => void;
   getAngles: () => JointReading[];
+  getCarriage: () => { weapon: Carriage | null; colour: Carriage | null };
   animate: (anim: FigureAnim) => void;
   tick: (dt: number, time: number) => void;
   dispose: () => void;
 }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
+const UP = new THREE.Vector3(0, 1, 0);
+
+/** Put a chest-space carriage on its group: butt at the origin, barrel on +Y. */
+function placeCarriage(group: THREE.Object3D, frame: Carriage) {
+  const dir = new THREE.Vector3(frame.dir[0], frame.dir[1], frame.dir[2]).normalize();
+  const quat = new THREE.Quaternion().setFromUnitVectors(UP, dir);
+  quat.multiply(new THREE.Quaternion().setFromAxisAngle(UP, rad(frame.roll ?? 0)));
+  group.quaternion.copy(quat);
+  group.position.set(frame.butt[0], frame.butt[1], frame.butt[2]);
+}
 
 export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boolean): Figure {
   const group = new THREE.Group();
@@ -429,21 +385,32 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   // ======================================================= rifle / colour
   const weapon = new THREE.Group();
   chest.add(weapon);
-  add(weapon, rbox(0.055, 0.6, 0.075, 0.018), mats.rifleWood, [0, 0.35, 0]);
-  add(weapon, rbox(0.062, 0.25, 0.1, 0.02), mats.rifleWood, [0, 0.115, -0.012], [0.15, 0, 0]);
-  add(weapon, rbox(0.046, 0.17, 0.048, 0.014), mats.rifleWood, [0, 0.615, 0.008], [0.06, 0, 0]);
-  add(weapon, new THREE.CylinderGeometry(0.012, 0.014, 0.5, 10), mats.rifleMetal, [0, 0.86, 0]);
-  add(weapon, rbox(0.05, 0.032, 0.07, 0.01), mats.rifleMetal, [0, 0.56, 0]);
-  add(weapon, rbox(0.04, 0.05, 0.09, 0.01), mats.rifleMetal, [0, 0.4, 0.055]);
-  add(weapon, new THREE.CylinderGeometry(0.008, 0.008, 0.13, 6), mats.rifleMetal, [0.036, 0.45, 0.0], [0, 0, 0.4]);
+  // Butt at the origin, muzzle on +Y: the scale the carriage frames use.
+  add(weapon, rbox(0.054, 0.3, 0.08, 0.02), mats.rifleWood, [0, 0.15, 0]);
+  add(weapon, rbox(0.052, 0.022, 0.082, 0.008), mats.rifleMetal, [0, 0.013, 0]);
+  add(weapon, rbox(0.046, 0.14, 0.056, 0.018), mats.rifleWood, [0, 0.365, 0.004]);
+  add(weapon, rbox(0.05, 0.15, 0.062, 0.012), mats.rifleMetal, [0, 0.46, 0.002]);
+  add(weapon, rbox(0.042, 0.12, 0.05, 0.01), mats.rifleMetal, [0, 0.45, -0.052]);
+  add(weapon, new THREE.TorusGeometry(0.024, 0.006, 5, 12), mats.rifleMetal, [0, 0.4, -0.044], [Math.PI / 2, 0, 0]);
+  // Fore-end, upper band and barrel: the order grip falls on the band at 0.90.
+  add(weapon, rbox(0.05, 0.5, 0.054, 0.018), mats.rifleWood, [0, 0.72, 0.002]);
+  add(weapon, rbox(0.054, 0.07, 0.058, 0.012), mats.rifleMetal, [0, 0.94, 0]);
+  add(weapon, new THREE.CylinderGeometry(0.011, 0.012, 0.19, 10), mats.rifleMetal, [0, 1.045, 0]);
+  add(weapon, rbox(0.016, 0.02, 0.02, 0.004), mats.rifleMetal, [0, 1.1, 0.021]);
+  add(weapon, new THREE.CylinderGeometry(0.014, 0.012, 0.022, 10), mats.rifleMetal, [0, 1.122, 0]);
+  // Bolt handle on the right and the sling under the fore-end.
+  add(weapon, new THREE.CylinderGeometry(0.008, 0.008, 0.1, 6), mats.rifleMetal, [-0.04, 0.47, 0], [0, 0, 1.15]);
+  add(weapon, new THREE.SphereGeometry(0.014, 8, 6), mats.rifleMetal, [-0.086, 0.455, 0]);
+  add(weapon, rbox(0.008, 0.42, 0.012, 0.003), mats.belt, [0, 0.34, -0.042]);
 
   const colour = new THREE.Group();
   chest.add(colour);
-  add(colour, new THREE.CylinderGeometry(0.015, 0.017, 2.15, 10), mats.rifleWood, [0, 1.02, 0]);
-  add(colour, new THREE.ConeGeometry(0.028, 0.1, 10), mats.badge, [0, 2.14, 0]);
-  add(colour, new THREE.SphereGeometry(0.03, 10, 8), mats.badge, [0, 2.2, 0]);
+  add(colour, new THREE.CylinderGeometry(0.016, 0.018, PIKE.length, 10), mats.rifleWood, [0, PIKE.length / 2, 0]);
+  add(colour, new THREE.CylinderGeometry(0.02, 0.016, 0.06, 10), mats.badge, [0, PIKE.length - 0.02, 0]);
+  add(colour, new THREE.ConeGeometry(0.03, 0.13, 10), mats.badge, [0, PIKE.length + 0.05, 0]);
+  add(colour, new THREE.SphereGeometry(0.028, 10, 8), mats.badge, [0, PIKE.length + 0.12, 0]);
   const flagGroup = new THREE.Group();
-  flagGroup.position.set(0.02, 1.97, 0);
+  flagGroup.position.set(0.02, PIKE.flagAt, 0);
   colour.add(flagGroup);
   const flagGeo = new THREE.PlaneGeometry(0.92, 0.6, 12, 8);
   const flagTexture = makeFlagTexture();
@@ -491,15 +458,27 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
     getAngles() {
       return angles;
     },
+    getCarriage() {
+      const frameOf = (group: THREE.Group): Carriage | null => {
+        if (!group.visible) return null;
+        const dir = new THREE.Vector3(0, 1, 0).applyQuaternion(group.quaternion);
+        return {
+          butt: [group.position.x, group.position.y, group.position.z],
+          dir: [dir.x, dir.y, dir.z],
+          hands: {},
+        };
+      };
+      return { weapon: frameOf(weapon), colour: frameOf(colour) };
+    },
     animate(anim) {
-      const a = targetsFor(anim.from, hasRifle, hasColour);
-      const b = targetsFor(anim.to, hasRifle, hasColour);
+      const a = poseTargets(anim.from, hasRifle, hasColour);
+      const b = poseTargets(anim.to, hasRifle, hasColour);
       const u = Math.min(1, Math.max(0, anim.u));
       if (anim.dressing && !hasRifle && !hasColour) {
-        a.handR = [-0.66, 0.32, -0.02];
-        b.handR = [-0.66, 0.32, -0.02];
-        a.handL = [0.235, -0.1, 0.02];
-        b.handL = [0.235, -0.1, 0.02];
+        a.handL = DRESS_HANDS.left;
+        b.handL = DRESS_HANDS.left;
+        a.handR = DRESS_HANDS.right;
+        b.handR = DRESS_HANDS.right;
       }
 
       const posture = anim.to.posture;
@@ -507,7 +486,11 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       const spineTarget = DRILL_SPINE[posture] ?? DRILL_SPINE.attention;
       const moving = anim.gait === 'quick' || anim.gait === 'slow' || anim.gait === 'double';
       const marking = anim.gait === 'markTime';
-      const phase = moving ? (anim.stride / 1.5) * Math.PI * 2 : marking ? anim.time * Math.PI * 4 : 0;
+      const phase = moving
+        ? (anim.stride / STRIDE_LENGTH) * Math.PI * 2
+        : marking
+          ? anim.time * Math.PI * 4
+          : 0;
       const s = Math.sin(phase);
 
       // --- trunk: posture, gait lean, pelvic and thoracic counter-rotation
@@ -515,7 +498,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       const twist = moving || marking ? s * 3.5 : 0;
       pelvis.rotation.set(rad(clampJoint('lumbarFlexion', lean * 0.4)), rad(-twist * 0.55), rad(s * 2));
       spine.rotation.set(rad(clampJoint('lumbarFlexion', lean * 0.6)), rad(twist * 0.35), 0);
-      chest.rotation.set(rad(clampJoint('thoracicRotation', twist * 0.5)), rad(twist * 0.4), rad(-s * 1.2));
+      chest.rotation.set(0, rad(twist * 0.4), rad(-s * 1.2));
 
       // --- head and neck: eyes right/left is cervical rotation, head level
       const eyes = anim.eyes;
@@ -526,64 +509,35 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       head.rotation.x = rad(spineTarget.cervical * 0.5);
       beret.visible = anim.headdress === 'worn';
 
-      // --- weapon and colour carriage
-      const weaponRot = a.weapon && b.weapon ? (lerpV(a.weapon, b.weapon, u) as Rot) : (b.weapon ?? a.weapon);
-      const colourRot = a.colour && b.colour ? (lerpV(a.colour, b.colour, u) as Rot) : (b.colour ?? a.colour);
-      weapon.visible = !!weaponRot && hasRifle;
-      colour.visible = !!colourRot && hasColour;
+      // --- rifle and colour: place the frame, then the hands on its grips
+      const weaponFrame = mixCarriage(a.weapon, b.weapon, u);
+      const colourFrame = mixCarriage(a.colour, b.colour, u);
+      weapon.visible = !!weaponFrame && hasRifle;
+      colour.visible = !!colourFrame && hasColour;
+      if (weaponFrame) placeCarriage(weapon, weaponFrame);
+      if (colourFrame) placeCarriage(colour, colourFrame);
 
-      const handL = lerpV(a.handL, b.handL, u);
-      const handR = lerpV(a.handR, b.handR, u);
+      let handL = lerpV(a.handL, b.handL, u);
+      let handR = lerpV(a.handR, b.handR, u);
 
-      // arm swing from the shoulder while marching, unless that arm carries kit
-      const freeLeft = !hasRifle && !hasColour;
-      if ((moving || marking) && freeLeft) {
-        const swing = rad(gait.shoulderSwing);
-        const amp = Math.sin(swing) * 0.52;
-        const lift = (1 - Math.cos(swing)) * 0.52;
-        handR[2] -= s * amp;
-        handL[2] += s * amp;
-        handR[1] += Math.abs(s) * lift;
-        handL[1] += Math.abs(s) * lift;
+      // a free arm swings from the shoulder; a hand on kit stays on its grip
+      if (moving || marking) {
+        const swing = gait.shoulderSwing * s;
+        if (!handIsGripping(a, 'L') && !handIsGripping(b, 'L')) handL = swingHand(handL, -swing, gait.elbow);
+        if (!handIsGripping(a, 'R') && !handIsGripping(b, 'R')) handR = swingHand(handR, swing, gait.elbow);
       }
 
-      if (weaponRot) {
-        const euler = new THREE.Euler(rad(weaponRot[0]), rad(weaponRot[1]), rad(weaponRot[2]));
-        weapon.quaternion.setFromEuler(euler);
-        const offset = new THREE.Vector3(0, 0.36, 0).applyQuaternion(weapon.quaternion);
-        weapon.position.set(handR[0] - offset.x, handR[1] - CHEST_Y - offset.y, handR[2] - offset.z);
-      }
-      if (colourRot) {
-        const euler = new THREE.Euler(rad(colourRot[0]), rad(colourRot[1]), rad(colourRot[2]));
-        colour.quaternion.setFromEuler(euler);
-        const offset = new THREE.Vector3(0, 0.78, 0).applyQuaternion(colour.quaternion);
-        colour.position.set(handR[0] - offset.x, handR[1] - CHEST_Y - offset.y, handR[2] - offset.z);
-      }
+      solveArm(armL, [BODY.shoulderX, SHOULDER_Y, 0], handL, 1);
+      solveArm(armR, [-BODY.shoulderX, SHOULDER_Y, 0], handR, -1);
 
-      // hands are given in torso space; the arm chain lives in chest space
-      solveArm(armL, [0.2, SHOULDER_Y, 0], [handL[0], handL[1] - CHEST_Y, handL[2]], 1);
-      solveArm(armR, [-0.2, SHOULDER_Y, 0], [handR[0], handR[1] - CHEST_Y, handR[2]], -1);
-
-      // --- legs: hip swing with a knee that folds on the lift and the backswing
-      const hipMean = gait.hip * 0.45;
-      const amp = gait.hip * 0.55 + (gait.hip > 40 ? 0 : 6);
-      const hipL = clampJoint('hipFlexion', hipMean + s * amp);
-      const hipR = clampJoint('hipFlexion', hipMean - s * amp);
-      const backL = Math.max(0, -s);
-      const backR = Math.max(0, s);
-      const kneeBase = gait.knee;
-      const kneeFold = gait.knee > 40 ? 0 : 22;
-      const kneeL = clampJoint('kneeFlexion', kneeBase * (gait.knee > 40 ? clamp01(s) : 1) + kneeFold * backL + 4);
-      const kneeR = clampJoint('kneeFlexion', kneeBase * (gait.knee > 40 ? clamp01(-s) : 1) + kneeFold * backR + 4);
-      const ankleL = clampJoint('anklePlantar', gait.ankle * (0.45 + 0.55 * backL));
-      const ankleR = clampJoint('anklePlantar', gait.ankle * (0.45 + 0.55 * backR));
-
-      legL.thigh.rotation.set(rad(-hipL), 0, 0);
-      legR.thigh.rotation.set(rad(-hipR), 0, 0);
-      legL.knee.rotation.set(rad(kneeL), 0, 0);
-      legR.knee.rotation.set(rad(kneeR), 0, 0);
-      legL.ankle.rotation.set(rad(ankleL - hipL * 0.15 - kneeL * 0.25), 0, 0);
-      legR.ankle.rotation.set(rad(ankleR - hipR * 0.15 - kneeR * 0.25), 0, 0);
+      // --- legs: the gait model, already clamped to the joint ranges
+      const gp = gaitPose(anim.gait, phase);
+      legL.thigh.rotation.set(rad(-gp.hipL), 0, 0);
+      legR.thigh.rotation.set(rad(-gp.hipR), 0, 0);
+      legL.knee.rotation.set(rad(gp.kneeL), 0, 0);
+      legR.knee.rotation.set(rad(gp.kneeR), 0, 0);
+      legL.ankle.rotation.set(rad(gp.ankleL), 0, 0);
+      legR.ankle.rotation.set(rad(gp.ankleR), 0, 0);
 
       body.position.y = moving
         ? Math.abs(Math.sin(phase)) * 0.016
@@ -591,7 +545,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
           ? Math.abs(Math.sin(anim.time * Math.PI * 4)) * 0.012
           : 0;
 
-      // --- measure the actual joints that resulted
+      // --- measure the joints that actually resulted
       const upperL = new THREE.Vector3(0, -1, 0).applyQuaternion(armL.upper.quaternion);
       const upperR = new THREE.Vector3(0, -1, 0).applyQuaternion(armR.upper.quaternion);
       const foreL = new THREE.Vector3(0, -1, 0).applyQuaternion(
@@ -602,23 +556,36 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       );
       const elbowL = deg(Math.acos(Math.max(-1, Math.min(1, upperL.dot(foreL)))));
       const elbowR = deg(Math.acos(Math.max(-1, Math.min(1, upperR.dot(foreR)))));
+      // Elevation from straight down, split into a sagittal and a frontal part.
+      const limb = (v: THREE.Vector3, mirror: 1 | -1) => {
+        const len = v.length() || 1;
+        const elevation = Math.acos(Math.max(-1, Math.min(1, -v.y / len)));
+        const azimuth = Math.atan2((v.x / len) * mirror, v.z / len);
+        return {
+          flexion: deg(elevation * Math.cos(azimuth)),
+          abduction: deg(elevation * Math.sin(azimuth)),
+        };
+      };
+      const armLimb = limb(upperL, 1);
+      const armRLimb = limb(upperR, -1);
+
       angles = [
-        reading('hipFlexion', hipL, 'L'),
-        reading('hipFlexion', hipR, 'R'),
-        reading('kneeFlexion', kneeL, 'L'),
-        reading('kneeFlexion', kneeR, 'R'),
-        reading('anklePlantar', ankleL, 'L'),
-        reading('anklePlantar', ankleR, 'R'),
-        reading('shoulderFlexion', deg(Math.atan2(upperL.z, -upperL.y)), 'L'),
-        reading('shoulderFlexion', deg(Math.atan2(upperR.z, -upperR.y)), 'R'),
-        reading('shoulderAbduction', deg(Math.atan2(upperL.x, -upperL.y)), 'L'),
-        reading('shoulderAbduction', deg(Math.atan2(-upperR.x, -upperR.y)), 'R'),
+        reading('hipFlexion', deg(-legL.thigh.rotation.x), 'L'),
+        reading('hipFlexion', deg(-legR.thigh.rotation.x), 'R'),
+        reading('kneeFlexion', deg(legL.knee.rotation.x), 'L'),
+        reading('kneeFlexion', deg(legR.knee.rotation.x), 'R'),
+        reading('anklePlantar', deg(legL.ankle.rotation.x), 'L'),
+        reading('anklePlantar', deg(legR.ankle.rotation.x), 'R'),
+        reading('shoulderFlexion', armLimb.flexion, 'L'),
+        reading('shoulderFlexion', armRLimb.flexion, 'R'),
+        reading('shoulderAbduction', armLimb.abduction, 'L'),
+        reading('shoulderAbduction', armRLimb.abduction, 'R'),
         reading('elbowFlexion', elbowL, 'L'),
         reading('elbowFlexion', elbowR, 'R'),
-        reading('cervicalRotation', -cervical),
-        reading('thoracicRotation', twist * 0.9),
-        reading('lumbarFlexion', lean),
-        reading('pelvicTilt', s * 2),
+        reading('cervicalRotation', deg(-(neck.rotation.y + head.rotation.y))),
+        reading('thoracicRotation', deg(spine.rotation.y + chest.rotation.y)),
+        reading('lumbarFlexion', deg(pelvis.rotation.x + spine.rotation.x)),
+        reading('pelvicTilt', deg(pelvis.rotation.z)),
       ];
     },
     tick(_dt, time) {
@@ -639,7 +606,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       });
       allMats.forEach((m) => m.dispose());
       flagMat.dispose();
-      flagTexture.dispose();
+      flagTexture?.dispose();
     },
   };
 }
@@ -657,8 +624,8 @@ function solveArm(
   const L2 = FOREARM;
   const dir = T.clone().sub(S);
   let dist = dir.length();
-  const maxReach = L1 + L2 - 0.015;
-  const minReach = Math.abs(L1 - L2) + 0.02;
+  const maxReach = ARM_MAX_REACH;
+  const minReach = ARM_MIN_REACH;
   dist = Math.max(minReach, Math.min(maxReach, dist));
   dir.normalize();
   const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
@@ -682,7 +649,8 @@ function solveArm(
   arm.elbow.quaternion.copy(localFore);
 }
 
-function makeFlagTexture(): THREE.CanvasTexture {
+function makeFlagTexture(): THREE.CanvasTexture | null {
+  if (typeof document === 'undefined') return null;
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 320;
