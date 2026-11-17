@@ -1,0 +1,382 @@
+import { useEffect, useRef } from 'react';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { UNIFORMS } from '../engine/constants';
+import { sampleTimeline, type Timeline } from '../engine/simulate';
+import { useStore } from '../state/store';
+import { createFigure, type Figure, type FigurePalette } from './figure';
+
+type Preset = 'front' | 'flank' | 'overhead' | 'follow';
+
+export function Stage3D() {
+  const mountRef = useRef<HTMLDivElement>(null);
+  const apiRef = useRef<{
+    renderer: THREE.WebGLRenderer;
+    scene: THREE.Scene;
+    camera: THREE.PerspectiveCamera;
+    controls: OrbitControls;
+    figures: Map<string, Figure>;
+    square: THREE.Group | null;
+    paletteKey: string;
+    preset: Preset;
+    frame: (preset: Preset) => void;
+  } | null>(null);
+
+  const plan = useStore((s) => s.plan);
+  const timeline = useStore((s) => s.timeline);
+  const detail = useStore((s) => s.detail);
+
+  // --- scene setup (once) -------------------------------------------------
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    mount.appendChild(renderer.domElement);
+    renderer.domElement.style.display = 'block';
+    renderer.domElement.style.width = '100%';
+    renderer.domElement.style.height = '100%';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#161d24');
+    scene.fog = new THREE.Fog('#161d24', 55, 140);
+
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 400);
+    camera.position.set(0, 9, 22);
+
+    const hemi = new THREE.HemisphereLight('#cfe3f5', '#2a2f2a', 1.15);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight('#fff3dc', 2.1);
+    sun.position.set(22, 30, 16);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -30;
+    sun.shadow.camera.right = 30;
+    sun.shadow.camera.top = 30;
+    sun.shadow.camera.bottom = -30;
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 90;
+    sun.shadow.bias = -0.0006;
+    scene.add(sun);
+    scene.add(new THREE.AmbientLight('#9fb4c4', 0.25));
+
+    const grass = new THREE.Mesh(
+      new THREE.CircleGeometry(90, 48),
+      new THREE.MeshStandardMaterial({ color: '#2c382c', roughness: 1 }),
+    );
+    grass.rotation.x = -Math.PI / 2;
+    grass.position.y = -0.07;
+    grass.receiveShadow = true;
+    scene.add(grass);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1.1, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.maxPolarAngle = Math.PI / 2 - 0.04;
+    controls.minDistance = 3;
+    controls.maxDistance = 65;
+
+    const frame = (preset: Preset) => {
+      const state = useStore.getState();
+      const sample = sampleTimeline(state.timeline, state.t);
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minZ = Infinity;
+      let maxZ = -Infinity;
+      for (const s of sample.soldiers) {
+        minX = Math.min(minX, s.x);
+        maxX = Math.max(maxX, s.x);
+        minZ = Math.min(minZ, s.z);
+        maxZ = Math.max(maxZ, s.z);
+      }
+      const hasBody = Number.isFinite(minX);
+      const cx = hasBody ? (minX + maxX) / 2 : 0;
+      const cz = hasBody ? (minZ + maxZ) / 2 : 0;
+      const frontage = hasBody ? Math.max(6, maxX - minX) : 12;
+      const depthspan = hasBody ? Math.max(4, maxZ - minZ) : 6;
+      const vFov = (camera.fov * Math.PI) / 180;
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * Math.max(0.4, camera.aspect));
+      const needW = (frontage * 0.6) / Math.tan(hFov / 2);
+      const needH = (depthspan * 0.78) / Math.tan(vFov / 2);
+      const dist = Math.max(8, needW, needH);
+      if (preset === 'front') {
+        controls.target.set(cx, 1.15, cz);
+        camera.position.set(cx - frontage * 0.16, Math.max(4.2, Math.min(11, dist * 0.28)), cz + dist * 0.98);
+      } else if (preset === 'flank') {
+        controls.target.set(cx, 1.15, cz);
+        camera.position.set(cx + dist * 0.95, Math.max(4, Math.min(9.5, dist * 0.24)), cz + depthspan * 0.3);
+      } else if (preset === 'overhead') {
+        controls.target.set(cx, 0, cz);
+        camera.position.set(cx + 0.01, Math.max(14, frontage * 1.05), cz + 0.01);
+      } else {
+        controls.target.set(cx, 1.1, cz);
+        camera.position.set(cx + 2.2, Math.max(3.8, dist * 0.24), cz - Math.max(6, dist * 0.5));
+      }
+      controls.update();
+    };
+
+    apiRef.current = {
+      renderer,
+      scene,
+      camera,
+      controls,
+      figures: new Map(),
+      square: null,
+      paletteKey: '',
+      preset: 'front',
+      frame,
+    };
+
+    if (import.meta.env.DEV) (window as unknown as { __cjcrStage?: unknown }).__cjcrStage = apiRef.current;
+    frame('front');
+
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const resize = () => {
+      const w = mount.clientWidth || 1;
+      const h = mount.clientHeight || 1;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const api = apiRef.current;
+        if (api) api.frame(api.preset);
+      }, 150);
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(mount);
+
+    let raf = 0;
+    let last = performance.now();
+    const loop = () => {
+      const state = useStore.getState();
+      const api = apiRef.current;
+      if (!api) return;
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const sample = sampleTimeline(state.timeline, state.t);
+      for (const s of sample.soldiers) {
+        const fig = api.figures.get(s.soldier.id);
+        if (!fig) continue;
+        fig.setHeight(s.soldier.height);
+        fig.setTransform(s.x, s.z, s.heading);
+        fig.animate({
+          from: sample.from,
+          to: sample.to,
+          u: sample.u,
+          gait: s.gait,
+          stride: s.stride,
+          time: now / 1000,
+          eyes: sample.u > 0.45 ? sample.to.eyes : sample.from.eyes,
+          headdress: sample.u > 0.5 ? sample.to.headdress : sample.from.headdress,
+          dressing: sample.title.toLowerCase().includes('dress'),
+        });
+        fig.tick(dt, now / 1000);
+      }
+      if (api.preset === 'follow' && sample.soldiers.length) {
+        let cx = 0;
+        let cz = 0;
+        for (const s of sample.soldiers) {
+          cx += s.x;
+          cz += s.z;
+        }
+        cx /= sample.soldiers.length;
+        cz /= sample.soldiers.length;
+        const delta = new THREE.Vector3(cx, 0, cz).sub(api.controls.target);
+        api.controls.target.add(delta);
+        api.camera.position.add(delta);
+      }
+      api.controls.update();
+      api.renderer.render(api.scene, api.camera);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+      controls.dispose();
+      renderer.dispose();
+      if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement);
+      apiRef.current = null;
+    };
+  }, []);
+
+  // --- parade square -----------------------------------------------------
+  useEffect(() => {
+    const api = apiRef.current;
+    if (!api) return;
+    if (api.square) {
+      api.scene.remove(api.square);
+      api.square.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+          else o.material.dispose();
+        }
+      });
+    }
+    const group = buildSquare(plan.settings.squareWidth, plan.settings.squareDepth);
+    api.square = group;
+    api.scene.add(group);
+  }, [plan.settings.squareWidth, plan.settings.squareDepth]);
+
+  // --- figures -----------------------------------------------------------
+  const palette = UNIFORMS[plan.settings.uniform] as FigurePalette;
+  const rosterKey = timeline.soldiers
+    .map((s) => `${s.id}:${s.height.toFixed(2)}:${s.rifle ? 1 : 0}:${s.colour ? 1 : 0}`)
+    .join('|');
+  const paletteKey = `${plan.settings.uniform}|${detail}`;
+
+  useEffect(() => {
+    const api = apiRef.current;
+    if (!api) return;
+    const rebuild = api.paletteKey !== paletteKey || api.figures.size !== timeline.soldiers.length;
+    if (rebuild) {
+      for (const fig of api.figures.values()) {
+        api.scene.remove(fig.group);
+        fig.dispose();
+      }
+      api.figures.clear();
+    }
+    for (const soldier of timeline.soldiers) {
+      if (!api.figures.has(soldier.id)) {
+        const fig = createFigure({ palette, detail }, soldier.rifle, soldier.colour);
+        fig.setHeight(soldier.height);
+        api.scene.add(fig.group);
+        api.figures.set(soldier.id, fig);
+      }
+    }
+    for (const [id, fig] of api.figures) {
+      if (!timeline.soldiers.some((s) => s.id === id)) {
+        api.scene.remove(fig.group);
+        fig.dispose();
+        api.figures.delete(id);
+      }
+    }
+    api.paletteKey = paletteKey;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rosterKey, paletteKey]);
+
+  // frame the body on first load and whenever its size changes
+  const bodyKey = `${timeline.soldiers.length}|${plan.settings.squareWidth}|${plan.settings.squareDepth}|${plan.settings.strength}`;
+  useEffect(() => {
+    const id = setTimeout(() => apiRef.current?.frame('front'), 40);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bodyKey]);
+
+  return (
+    <div className="stage3d">
+      <div ref={mountRef} className="stage3d-canvas" />
+      <div className="stage3d-tools">
+        <div className="seg">
+          <button onClick={() => apiRef.current?.frame('front')}>Front</button>
+          <button onClick={() => apiRef.current?.frame('flank')}>Flank</button>
+          <button onClick={() => apiRef.current?.frame('overhead')}>Overhead</button>
+          <button onClick={() => apiRef.current?.frame('follow')}>Follow</button>
+        </div>
+        <span className="stage3d-hint">drag to orbit · scroll to zoom</span>
+      </div>
+    </div>
+  );
+}
+
+function buildSquare(width: number, depth: number): THREE.Group {
+  const group = new THREE.Group();
+  const canvas = document.createElement('canvas');
+  const px = 18;
+  canvas.width = Math.round(width * px);
+  canvas.height = Math.round(depth * px);
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#4a4f57';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // asphalt grain
+  for (let i = 0; i < 2600; i += 1) {
+    const x = Math.random() * canvas.width;
+    const y = Math.random() * canvas.height;
+    const a = 0.03 + Math.random() * 0.05;
+    ctx.fillStyle = Math.random() > 0.5 ? `rgba(255,255,255,${a})` : `rgba(0,0,0,${a})`;
+    ctx.fillRect(x, y, 2, 2);
+  }
+  // one metre grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.055)';
+  ctx.lineWidth = 1;
+  for (let m = 1; m < width; m += 1) {
+    ctx.beginPath();
+    ctx.moveTo(m * px, 0);
+    ctx.lineTo(m * px, canvas.height);
+    ctx.stroke();
+  }
+  for (let m = 1; m < depth; m += 1) {
+    ctx.beginPath();
+    ctx.moveTo(0, m * px);
+    ctx.lineTo(canvas.width, m * px);
+    ctx.stroke();
+  }
+  // painted boundary
+  ctx.strokeStyle = 'rgba(240,240,232,0.8)';
+  ctx.lineWidth = 6;
+  ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+  // centre cross and marks
+  ctx.strokeStyle = 'rgba(240,240,232,0.5)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(canvas.width / 2 - 18, canvas.height / 2);
+  ctx.lineTo(canvas.width / 2 + 18, canvas.height / 2);
+  ctx.moveTo(canvas.width / 2, canvas.height / 2 - 18);
+  ctx.lineTo(canvas.width / 2, canvas.height / 2 + 18);
+  ctx.stroke();
+  // distance ticks every five metres
+  ctx.fillStyle = 'rgba(240,240,232,0.55)';
+  ctx.font = `${Math.round(px * 0.42)}px ui-sans-serif, system-ui, sans-serif`;
+  for (let m = 5; m < width; m += 5) {
+    ctx.fillRect(m * px - 1, 10, 2, 14);
+    ctx.fillRect(m * px - 1, canvas.height - 24, 2, 14);
+    ctx.fillText(`${m}`, m * px + 5, 34);
+  }
+  for (let m = 5; m < depth; m += 5) {
+    ctx.fillRect(10, m * px - 1, 14, 2);
+    ctx.fillRect(canvas.width - 24, m * px - 1, 14, 2);
+    ctx.fillText(`${m}`, 32, m * px - 5);
+  }
+  ctx.fillStyle = 'rgba(240,240,232,0.4)';
+  ctx.font = `${Math.round(px * 0.34)}px ui-sans-serif, system-ui, sans-serif`;
+  ctx.fillText(
+    `CJCR PARADE SQUARE  ${width.toFixed(1)} × ${depth.toFixed(1)} m`,
+    canvas.width / 2 - px * 2.9,
+    canvas.height - px * 1.6,
+  );
+  ctx.fillStyle = 'rgba(240,240,232,0.32)';
+  ctx.fillText('FRONT', canvas.width / 2 - px * 1.5, 56);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+
+  const surface = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, depth),
+    new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, metalness: 0.02 }),
+  );
+  surface.rotation.x = -Math.PI / 2;
+  surface.receiveShadow = true;
+  group.add(surface);
+
+  const kerb = new THREE.Mesh(
+    new THREE.BoxGeometry(width + 0.35, 0.09, depth + 0.35),
+    new THREE.MeshStandardMaterial({ color: '#7d7f78', roughness: 1 }),
+  );
+  kerb.position.y = -0.055;
+  kerb.receiveShadow = true;
+  group.add(kerb);
+
+  return group;
+}
