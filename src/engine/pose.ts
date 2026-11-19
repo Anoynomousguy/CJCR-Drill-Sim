@@ -13,6 +13,7 @@
 
 import { clampJoint } from './anatomy';
 import type { ColourState, Posture, Snapshot, WeaponState } from './types';
+import { smoothstep } from './util';
 
 export type Vec3 = [number, number, number];
 export type Rot = [number, number, number];
@@ -103,9 +104,61 @@ export const POSTURE_HANDS: Record<Posture, { left: Vec3; right: Vec3; torso?: R
   attention: { left: [0.225, -0.25, 0.02], right: [-0.225, -0.25, 0.02] },
   standAtEase: { left: [0.055, -0.02, -0.17], right: [-0.055, -0.02, -0.17] },
   standEasy: { left: [0.1, -0.06, -0.16], right: [-0.1, -0.06, -0.16], torso: [2, 0, 0] },
-  // Right fingertips at the right eyebrow: 1.66 m up, 0.31 m from the shoulder.
-  salute: { left: [0.225, -0.25, 0.02], right: [-0.07, 0.5, 0.1] },
+  // SALUTE (Ch 2, paras 37-38): palm down, fingers extended, the tip of the
+  // second finger on the lower edge of the headdress in line with the outside
+  // of the right eyebrow, and the upper arm parallel to the ground. The target
+  // is the WRIST: the straight hand reaches a further 0.16 m, so the old wrist
+  // at the eyebrow itself put the fingers into the beret and forced the elbow
+  // 0.19 m above the shoulder to get there.
+  salute: { left: [0.225, -0.25, 0.02], right: [-0.141, 0.445, 0.155] },
 };
+
+/** Wrist-to-second-fingertip reach of the straight hand, metres. */
+export const HAND_REACH = 0.16;
+
+/**
+ * The salute at the halt is two numbered movements (Ch 2, paras 37-38): ONE
+ * carries the hand to the headdress in one beat, the standard pause holds it
+ * for two beats, and TWO cuts it away in one. As fractions of the movement:
+ * 0.25 + 0.50 + 0.25 of 2 s = 0.5 s + 1.0 s + 0.5 s.
+ */
+export const SALUTE_RAISE = 0.25;
+export const SALUTE_CUT = 0.75;
+
+/** 0 at attention, 1 with the hand at the headdress; the raise and the cut. */
+export function saluteArmAt(raw: number): number {
+  const t = clamp01(raw);
+  if (t < SALUTE_RAISE) return smoothstep(t / SALUTE_RAISE);
+  if (t <= SALUTE_CUT) return 1;
+  return 1 - smoothstep((t - SALUTE_CUT) / (1 - SALUTE_CUT));
+}
+
+/**
+ * The elbow of a salute, solved rather than posed: on the horizontal plane
+ * through the shoulder (the upper arm parallel to the ground), BODY.humerus
+ * from the shoulder and BODY.forearm from the wrist. Of the two intersections
+ * the salute takes the one that comes forward.
+ */
+export function levelElbow(shoulder: Vec3, wrist: Vec3): Vec3 | null {
+  const dx = wrist[0] - shoulder[0];
+  const dz = wrist[2] - shoulder[2];
+  const span = Math.hypot(dx, dz);
+  if (span < 1e-4) return null;
+  const dy = wrist[1] - shoulder[1];
+  const along =
+    (BODY.humerus ** 2 + span ** 2 + dy ** 2 - BODY.forearm ** 2) /
+    (2 * BODY.humerus * span);
+  if (Math.abs(along) > 1) return null;
+  const across = Math.sqrt(1 - along * along);
+  const ax = (dx / span) * along;
+  const az = (dz / span) * along;
+  const bx = -(dz / span) * across;
+  const bz = (dx / span) * across;
+  const forward = az + bz >= az - bz;
+  const x = forward ? ax + bx : ax - bx;
+  const z = forward ? az + bz : az - bz;
+  return [shoulder[0] + BODY.humerus * x, shoulder[1], shoulder[2] + BODY.humerus * z];
+}
 
 /** RIGHT DRESS: arm horizontal at shoulder height, hand closed, back up. */
 export const DRESS_HANDS: { left: Vec3; right: Vec3 } = {

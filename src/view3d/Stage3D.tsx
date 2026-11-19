@@ -254,6 +254,7 @@ export function Stage3D() {
               ? { left: sample.turnBody.left, right: sample.turnBody.right, hipY: sample.turnBody.hipY }
               : undefined,
           armCut: stepPlan?.armsAt?.(sample.progress) ?? 0,
+          saluteArm: sample.saluteArm,
           turn: sample.turn,
           rifle: sample.rifle,
         });

@@ -29,6 +29,7 @@ import {
 } from './steps';
 import { makeMarchTurnPlan, marchTurnBodyAt } from './marchTurn';
 import { aboutTurnBodyAt, makeAboutTurnPlan } from './aboutTurn';
+import { saluteArmAt } from './pose';
 import { riflePlanFor, sampleRifle, type RiflePlan, type RifleSample } from './rifle';
 import { makeTurnPlan, turnBodyAt, turnHeadingAt, type TurnBody, type TurnPlan } from './turn';
 import type { Frame, Gait, Plan, Snapshot, Soldier } from './types';
@@ -72,6 +73,8 @@ export interface Segment {
   moveEnd?: number;
   /** Per-count Lee-Enfield carriage plan. */
   rifle?: RiflePlan;
+  /** The halt salute's two movements: ONE raise, the standard pause, TWO cut. */
+  salute?: boolean;
   /** This march continues the plant-to-plant phase out of a turn. */
   leadIn?: boolean;
 }
@@ -111,6 +114,8 @@ export interface Sample {
   turnBody?: TurnBody;
   /** Count-sampled rifle carriage and hand grips. */
   rifle?: RifleSample;
+  /** 0..1 right-arm salute: 1 through the standard pause, 0 after the cut. */
+  saluteArm?: number;
   /** Per-soldier step plans for this movement, when it has explicit footwork. */
   steps?: Record<string, StepPlan>;
   /** Previous movement type, so EYES FRONT can cut a held dressing arm. */
@@ -364,6 +369,10 @@ export function buildTimeline(plan: Plan): Timeline {
         }
         if (eff.step) toSnapshot.step = eff.step;
         if (eff.gait) toSnapshot.gait = eff.gait;
+        // A salute at the halt is complete in itself: ONE in a beat, the
+        // standard pause holding it, TWO cutting it away in a beat. The
+        // regular state duration would drop the pause and the cut.
+        if (instance.type === 'salute') duration = 2 * BEAT + STANDARD_PAUSE;
         break;
       }
       case 'turn': {
@@ -898,6 +907,7 @@ export function buildTimeline(plan: Plan): Timeline {
       steps,
       moveEnd,
       rifle: rifle ?? undefined,
+      salute: instance.type === 'salute' || undefined,
       leadIn: marchLeadIn || undefined,
     });
 
@@ -1109,6 +1119,7 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
     turn: seg.turn ? { plan: seg.turn, progress: raw } : undefined,
     turnBody: turnBody ?? undefined,
     rifle,
+    saluteArm: seg.salute ? saluteArmAt(raw) : undefined,
     steps: seg.steps,
     prevType: seg.index > 0 ? timeline.segments[seg.index - 1].type : '',
     soldiers,

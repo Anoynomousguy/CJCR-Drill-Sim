@@ -193,9 +193,10 @@ const footHalt: MoveDef[] = [
     words: 'SQUAD — TO THE FRONT — SALUTE',
     reference: 'Ch 2 · Saluting at the halt',
     kind: 'state',
-    counts: 3,
-    effect: { posture: 'salute' },
-    help: 'Right hand to the outside edge of the right eyebrow, elbow to the rear, hold for the standard pause, cut away.',
+    counts: 2,
+    effect: { posture: 'attention' },
+    requires: { posture: ['attention'], weapon: ['none'] },
+    help: 'ONE: the right hand by its shortest route to the front of the headdress, palm down, fingers extended, second finger at the outside of the right eyebrow, elbow in line with the shoulders and the upper arm parallel to the ground. TWO: after the standard pause, the hand is cut sharply back to attention without slapping the thigh.',
   },
   {
     type: 'rightDress',
