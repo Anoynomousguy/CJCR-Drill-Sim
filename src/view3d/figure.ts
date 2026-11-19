@@ -19,6 +19,7 @@ import {
   handIsGripping,
   levelElbow,
   levelForearmElbow,
+  rifleGripElbow,
   lerpV,
   mixCarriage,
   poseTargets,
@@ -1252,6 +1253,8 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         salute = 0,
         /** This salute is given with a rifle: the forearm is level. */
         saluteArmed = false,
+        /** This grip is carried with the forearm parallel to the ground. */
+        levelGrip = false,
       ) => {
         // The wrist sits a palm's thickness out from the rifle, so the palm
         // touches the bar and the fingers can close around it.
@@ -1306,6 +1309,17 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
           const level = solve([S.x, S.y, S.z], [target[0], target[1], target[2]]);
           if (level) elbowPos.lerp(new THREE.Vector3(level[0], level[1], level[2]), salute);
         }
+        // RIFLE GRIP: the slope holds the left forearm parallel to the ground
+        // (54-04 para 27). The generic swing pole hangs the elbow under a hand
+        // that low and tips the forearm about nine degrees, so solve the elbow
+        // on the horizon through the wrist and keep it clear of the ribs.
+        if (levelGrip) {
+          const level = rifleGripElbow([S.x, S.y, S.z], [wrist[0], wrist[1], wrist[2]]);
+          if (level) {
+            const w = clamp01((grip - 0.15) / 0.7);
+            elbowPos.lerp(new THREE.Vector3(level[0], level[1], level[2]), w);
+          }
+        }
         const upperDir = elbowPos.clone().sub(S).normalize();
         const wristPos = S.clone().addScaledVector(dir, dist);
         const foreDir = wristPos.clone().sub(elbowPos).normalize();
@@ -1356,7 +1370,24 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       const dressRaised = dressArm && (anim.code?.dressArm ?? true) && dressUp > 0.15;
       const leftDressHand = dressRaised && hasRifle;
       const rightDressHand = dressRaised && !hasRifle;
-      const leftArm = runArm(armL, handL, 1, gripL, armAxisL, leftDressHand);
+      // The manual levels the left forearm wherever the rifle is carried on the
+      // shoulder or in front of it (slope and present arms), so the elbow is
+      // solved rather than left to the generic swing pole.
+      const levelLeftGrip =
+        weaponFrame !== null &&
+        gripL > 0.15 &&
+        (anim.to.weapon === 'slope' || anim.to.weapon === 'present');
+      const leftArm = runArm(
+        armL,
+        handL,
+        1,
+        gripL,
+        armAxisL,
+        leftDressHand,
+        0,
+        false,
+        levelLeftGrip,
+      );
       const rightArm = runArm(
         armR,
         handR,

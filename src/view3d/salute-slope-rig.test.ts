@@ -118,7 +118,12 @@ describe('salute at the slope on the live rig', () => {
     expect(
       Math.abs(leftElbow.y - leftWrist.y),
       'left forearm parallel to the ground at the slope',
-    ).toBeLessThan(0.04);
+    ).toBeLessThan(0.003);
+    // The other level intersection is inside the ribcage; the elbow that is
+    // taken hangs by the side, outboard of the shoulder and behind the hand.
+    const leftShoulder = bone(fig, 'upperArm.L');
+    expect(leftElbow.x, 'left elbow clear of the ribs').toBeGreaterThan(leftShoulder.x);
+    expect(leftElbow.z, 'left forearm points forward').toBeLessThan(leftWrist.z);
 
     // TWO: the hand is back at the side by the end of the action, the rifle
     // still held by the left hand.

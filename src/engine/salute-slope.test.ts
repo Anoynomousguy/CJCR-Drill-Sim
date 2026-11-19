@@ -9,6 +9,7 @@ import {
   carriagePoint,
   distance,
   levelForearmElbow,
+  rifleGripElbow,
   shoulderOf,
 } from './pose';
 import { buildTimeline, sampleTimeline } from './simulate';
@@ -71,6 +72,24 @@ describe('salute at the slope', () => {
     expect(RIFLE_CARRIAGE.slope.hands.right).toBeUndefined();
     const buttPlate = carriagePoint(RIFLE_CARRIAGE.slope, 0.02);
     expect(distance(buttPlate, shoulderOf(1))).toBeLessThan(ARM_MAX_REACH);
+  });
+
+  it('levels the left forearm under the butt on the slope', () => {
+    const shoulder = shoulderOf(1);
+    const wrist = carriagePoint(RIFLE_CARRIAGE.slope, 0.02);
+    // A level forearm needs the elbow on the wrist's horizon, so the wrist must
+    // hang less than a whole humerus below the shoulder.
+    expect(Math.abs(shoulder[1] - wrist[1])).toBeLessThan(BODY.humerus);
+
+    const elbow = rifleGripElbow(shoulder, wrist);
+    expect(elbow).not.toBeNull();
+    expect(elbow![1]).toBeCloseTo(wrist[1], 9);
+    expect(distance(elbow!, shoulder)).toBeCloseTo(BODY.humerus, 9);
+    expect(distance(elbow!, wrist)).toBeCloseTo(BODY.forearm, 9);
+    // The other intersection is inside the ribcage; this one hangs by the side
+    // and the forearm points forward.
+    expect(Math.abs(elbow![0])).toBeGreaterThanOrEqual(BODY.shoulderX);
+    expect(wrist[2] - elbow![2], 'forearm points forward').toBeGreaterThan(0.2);
   });
 
   it('levels the right forearm on the small of the butt', () => {

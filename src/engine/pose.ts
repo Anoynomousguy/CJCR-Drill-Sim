@@ -211,6 +211,44 @@ export function levelForearmElbow(shoulder: Vec3, wrist: Vec3): Vec3 | null {
   return forwardZ >= backZ ? [forwardX, level, forwardZ] : [backX, level, backZ];
 }
 
+/** The tunic front, chest space: a joint at z > this is clear of the body. */
+const TORSO_FRONT = 0.1;
+
+/**
+ * The elbow of a rifle grip the manual holds with the forearm parallel to the
+ * ground — the left hand at the butt at the slope (54-04: "left forearm
+ * parallel to the ground, close to the body"; "left elbow close to the body").
+ * The level plane through the wrist cuts the two-bone chain in two places. One
+ * intersection falls inside the ribcage, which is not a place a joint can be, so
+ * of the two the solver takes the one nearest the body that clears it: the
+ * upper arm hangs by the side instead of winging out, and the forearm points
+ * forward.
+ */
+export function rifleGripElbow(shoulder: Vec3, wrist: Vec3): Vec3 | null {
+  const level = wrist[1];
+  const drop = shoulder[1] - level;
+  // A level forearm needs the elbow on the wrist's horizon, so the wrist must
+  // hang less than a whole humerus below the shoulder.
+  if (Math.abs(drop) >= BODY.humerus) return null;
+  const r1 = Math.sqrt(BODY.humerus ** 2 - drop * drop);
+  const r2 = BODY.forearm;
+  const dx = wrist[0] - shoulder[0];
+  const dz = wrist[2] - shoulder[2];
+  const d = Math.hypot(dx, dz);
+  if (d < 1e-6 || d > r1 + r2 || d < Math.abs(r1 - r2)) return null;
+  const along = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+  const across = Math.sqrt(Math.max(0, r1 * r1 - along * along));
+  const ux = dx / d;
+  const uz = dz / d;
+  const bx = shoulder[0] + ux * along;
+  const bz = shoulder[2] + uz * along;
+  const a: Vec3 = [bx - uz * across, level, bz + ux * across];
+  const b: Vec3 = [bx + uz * across, level, bz - ux * across];
+  const clear = (p: Vec3) => Math.abs(p[0]) >= BODY.shoulderX - 0.02 || p[2] >= TORSO_FRONT;
+  const options = [a, b].filter(clear).sort((p, q) => Math.abs(p[0]) - Math.abs(q[0]));
+  return options[0] ?? (a[2] >= b[2] ? a : b);
+}
+
 /**
  * The elbow of a salute, solved rather than posed: on the horizontal plane
  * through the shoulder (the upper arm parallel to the ground), BODY.humerus
@@ -301,13 +339,16 @@ const RIFLE_ORDER: Carriage = {
 };
 
 const RIFLE_SLOPE: Carriage = {
-  // 54-04 para 27: the butt is held in the left hand in front of and in line
-  // with the centre of the left shoulder, the left forearm parallel to the
-  // ground, the rifle flat on the left shoulder. The old frame sat the butt at
-  // the hip joint, 15 cm lower, which hung the left forearm and put the armed
-  // salute's target out of reach of a level right forearm.
-  butt: [0.2, -0.05, 0.15],
-  dir: [0, 0.9, -0.44],
+  // 54-04 para 27: the butt is held in the left hand in front of the left
+  // shoulder, the rifle flat on the left shoulder, the left forearm parallel to
+  // the ground. The butt sits 2 cm below the shoulder line and 17 cm forward,
+  // with the barrel aimed through the hollow of the shoulder: at the old height
+  // the left wrist hung 27.2 cm below the shoulder — more than a whole humerus —
+  // so no level forearm existed and the elbow hung nine degrees low. The higher
+  // frame both levels the left forearm and keeps the armed salute's target on
+  // the small of the butt inside a level right arm's reach.
+  butt: [0.2, -0.02, 0.17],
+  dir: [0, 0.8374, -0.5475],
   roll: 12,
   hands: { left: 0.02 },
 };
