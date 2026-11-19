@@ -231,7 +231,7 @@ export function Stage3D() {
             ? sample.to.eyes
             : sample.eyesAmount !== undefined
               ? sample.eyesAmount > 0.001
-                ? 'right'
+                ? (sample.eyesDir ?? 'right')
                 : 'front'
               : sample.u > 0.45
                 ? sample.to.eyes

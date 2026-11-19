@@ -77,8 +77,8 @@ export interface Segment {
   salute?: 'halt' | 'march';
   /** The commander's eyes-right salute; EYES FRONT cuts it. */
   commanderSalute?: 'raise' | 'hold' | 'cut';
-  /** A head movement on the march: right turns the head out, front cuts it back. */
-  eyesTurn?: 'right' | 'front';
+  /** A head movement on the march: right or left turns the head out, front cuts it back. */
+  eyesTurn?: 'right' | 'left' | 'front';
   /** This march continues the plant-to-plant phase out of a turn. */
   leadIn?: boolean;
 }
@@ -120,8 +120,10 @@ export interface Sample {
   rifle?: RifleSample;
   /** 0..1 right-arm salute: 1 through the standard pause, 0 after the cut. */
   saluteArm?: number;
-  /** 0..1 head turn to the right for a movement that turns it on a footfall. */
+  /** 0..1 head turn for a movement that turns it on a footfall. */
   eyesAmount?: number;
+  /** Which way the head is turned while `eyesAmount` is above zero. */
+  eyesDir?: 'left' | 'right';
   /** 0..1 commander's salute on EYES RIGHT, cut on EYES FRONT. */
   commanderSalute?: number;
   /** Per-soldier step plans for this movement, when it has explicit footwork. */
@@ -244,7 +246,14 @@ function commandFoot(type: string | undefined, gait: Gait): 'L' | 'R' | null {
   // SALUTE, EYES RIGHT and EYES FRONT on the march are given as the left foot
   // is forward and on the ground (Ch 3), so the march handing over to them
   // finishes on the left foot.
-  if (type === 'saluteOnMarch' || type === 'eyesRight' || type === 'eyesFrontMarch') return 'L';
+  if (
+    type === 'saluteOnMarch' ||
+    type === 'saluteOnMarchLeft' ||
+    type === 'eyesRight' ||
+    type === 'eyesLeft' ||
+    type === 'eyesFrontMarch'
+  )
+    return 'L';
   // STEP OUT/SHORT and FORWARD are given mid-march and the march continues
   // through them, so forcing its last foot at the seam would insert a
   // half-beat step instead of timing the command.
@@ -387,7 +396,10 @@ export function buildTimeline(plan: Plan): Timeline {
     // EYES RIGHT and EYES FRONT on the march are two paces: the command's left
     // foot, the right foot's pace, and the left foot landing again as the head
     // turns or cuts (Ch 3, paras 89-90).
-    const eyesMarch = instance.type === 'eyesRight' || instance.type === 'eyesFrontMarch';
+    const eyesMarch =
+      instance.type === 'eyesRight' ||
+      instance.type === 'eyesLeft' ||
+      instance.type === 'eyesFrontMarch';
     // A salute on the march is eight paces (Ch 3), not a user parameter.
     const paceCount = def.kind === 'saluteMarch' || eyesMarch ? def.counts : paces;
 
@@ -994,13 +1006,14 @@ export function buildTimeline(plan: Plan): Timeline {
     }
 
     let commanderSalute: Segment['commanderSalute'];
-    if (instance.type === 'eyesRight') {
-      commanderSalute = fromSnapshot.eyes !== 'right' ? 'raise' : 'hold';
+    if (instance.type === 'eyesRight' || instance.type === 'eyesLeft') {
+      const dir = instance.type === 'eyesRight' ? 'right' : 'left';
+      commanderSalute = fromSnapshot.eyes !== dir ? 'raise' : 'hold';
       commanderSaluteHeld = true;
     } else if (instance.type === 'eyesFrontMarch') {
       commanderSalute = commanderSaluteHeld ? 'cut' : undefined;
       commanderSaluteHeld = false;
-    } else if (instance.type === 'saluteOnMarch') {
+    } else if (instance.type === 'saluteOnMarch' || instance.type === 'saluteOnMarchLeft') {
       commanderSaluteHeld = false;
     } else if (commanderSaluteHeld) {
       commanderSalute = 'hold';
@@ -1033,16 +1046,18 @@ export function buildTimeline(plan: Plan): Timeline {
       salute:
         instance.type === 'salute' || instance.type === 'saluteAtSlope'
           ? 'halt'
-          : instance.type === 'saluteOnMarch'
+          : instance.type === 'saluteOnMarch' || instance.type === 'saluteOnMarchLeft'
             ? 'march'
             : undefined,
       commanderSalute,
       eyesTurn:
-        instance.type === 'eyesRight'
+        instance.type === 'eyesRight' || instance.type === 'saluteOnMarch'
           ? 'right'
-          : instance.type === 'eyesFrontMarch'
-            ? 'front'
-            : undefined,
+          : instance.type === 'eyesLeft' || instance.type === 'saluteOnMarchLeft'
+            ? 'left'
+            : instance.type === 'eyesFrontMarch'
+              ? 'front'
+              : undefined,
       leadIn: marchLeadIn || undefined,
     });
 
@@ -1262,11 +1277,22 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
     eyesAmount:
       seg.salute === 'march'
         ? marchSaluteEyesAt(raw)
-        : seg.eyesTurn === 'right'
+        : seg.eyesTurn === 'right' || seg.eyesTurn === 'left'
           ? smoothstep(Math.max(0, Math.min(1, (raw - 0.5) * 2)))
           : seg.eyesTurn === 'front'
-            ? 1 - smoothstep(Math.max(0, Math.min(1, (raw - 0.5) * 2)))
+            ? // EYES FRONT with no head turned (no eyes right before it) has
+              // nothing to cut: starting the profile at one would swing the
+              // head out to the side first.
+              seg.fromSnapshot.eyes === 'front'
+              ? 0
+              : 1 - smoothstep(Math.max(0, Math.min(1, (raw - 0.5) * 2)))
             : undefined,
+    eyesDir:
+      seg.eyesTurn === 'left' || (seg.eyesTurn === 'front' && seg.fromSnapshot.eyes === 'left')
+        ? 'left'
+        : seg.eyesTurn
+          ? 'right'
+          : undefined,
     commanderSalute:
       seg.commanderSalute === 'raise'
         ? smoothstep(Math.max(0, Math.min(1, (raw - 0.5) * 2)))
