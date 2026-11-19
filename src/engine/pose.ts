@@ -134,6 +134,36 @@ export function saluteArmAt(raw: number): number {
 }
 
 /**
+ * The elbow of the armed salute. 54-04 para 90 puts the right forearm
+ * horizontal while the hand strikes the small of the butt, so the elbow sits
+ * on the horizontal plane through the wrist. Of the two intersections of that
+ * plane with the two-bone chain the salute takes the one in front of the
+ * chest, clear of the tunic.
+ */
+export function levelForearmElbow(shoulder: Vec3, wrist: Vec3): Vec3 | null {
+  const level = wrist[1];
+  const drop = shoulder[1] - level;
+  if (Math.abs(drop) >= BODY.humerus) return null;
+  const r1 = Math.sqrt(BODY.humerus ** 2 - drop * drop);
+  const r2 = BODY.forearm;
+  const dx = wrist[0] - shoulder[0];
+  const dz = wrist[2] - shoulder[2];
+  const d = Math.hypot(dx, dz);
+  if (d < 1e-6 || d > r1 + r2 || d < Math.abs(r1 - r2)) return null;
+  const along = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+  const across = Math.sqrt(Math.max(0, r1 * r1 - along * along));
+  const ux = dx / d;
+  const uz = dz / d;
+  const bx = shoulder[0] + ux * along;
+  const bz = shoulder[2] + uz * along;
+  const forwardX = bx - uz * across;
+  const forwardZ = bz + ux * across;
+  const backX = bx + uz * across;
+  const backZ = bz - ux * across;
+  return forwardZ >= backZ ? [forwardX, level, forwardZ] : [backX, level, backZ];
+}
+
+/**
  * The elbow of a salute, solved rather than posed: on the horizontal plane
  * through the shoulder (the upper arm parallel to the ground), BODY.humerus
  * from the shoulder and BODY.forearm from the wrist. Of the two intersections
@@ -204,6 +234,16 @@ export function carriagePoint(c: Carriage, along: number): Vec3 {
   return [c.butt[0] + d[0] * along, c.butt[1] + d[1] * along, c.butt[2] + d[2] * along];
 }
 
+/**
+ * SALUTING AT SLOPE ARMS (54-04 para 90): the right arm comes across the body
+ * and the hand strikes the small of the butt — not the headdress, which is the
+ * salute without arms. The target is a point on the rifle, so the hand stays
+ * on it whatever frame the rifle is carried in.
+ */
+export function armedSaluteHand(carriage: Carriage): Vec3 {
+  return carriagePoint(carriage, RIFLE.grip.small);
+}
+
 const RIFLE_ORDER: Carriage = {
   // Butt on the square beside the right boot, rifle upright, right hand at the
   // upper band — the point the straight arm naturally reaches (0.90 m up).
@@ -213,11 +253,13 @@ const RIFLE_ORDER: Carriage = {
 };
 
 const RIFLE_SLOPE: Carriage = {
-  // Butt at the left hip, barrel through the hollow of the left shoulder at
-  // 1.40 m, muzzle up and 25 cm behind the shoulder. The manual's slope is
-  // held by the LEFT hand around the butt plate, the right arm cut away.
-  butt: [0.17, -0.2, 0.1],
-  dir: [0.02, 0.95, -0.31],
+  // 54-04 para 27: the butt is held in the left hand in front of and in line
+  // with the centre of the left shoulder, the left forearm parallel to the
+  // ground, the rifle flat on the left shoulder. The old frame sat the butt at
+  // the hip joint, 15 cm lower, which hung the left forearm and put the armed
+  // salute's target out of reach of a level right forearm.
+  butt: [0.2, -0.05, 0.15],
+  dir: [0, 0.9, -0.44],
   roll: 12,
   hands: { left: 0.02 },
 };

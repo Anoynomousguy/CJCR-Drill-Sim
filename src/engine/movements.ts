@@ -698,10 +698,10 @@ const rifle: MoveDef[] = [
     words: 'SQUAD — TO THE FRONT — SALUTE',
     reference: '54-04 · Saluting at slope arms',
     kind: 'state',
-    counts: 3,
-    effect: { weapon: 'slope', posture: 'salute' },
+    counts: 2,
+    effect: { weapon: 'slope', posture: 'attention' },
     requires: { weapon: ['slope'] },
-    help: 'Right hand to the eyebrow while the rifle stays on the left shoulder.',
+    help: 'ONE: the right arm crosses the body and the hand strikes the small of the butt, forearm horizontal, back of the hand up, fingers and thumb together and straight, while the rifle stays on the left shoulder. TWO: after the standard pause, the hand is cut back to attention.',
   },
   {
     type: 'shortTrail',

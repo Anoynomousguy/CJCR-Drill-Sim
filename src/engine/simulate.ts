@@ -73,7 +73,7 @@ export interface Segment {
   moveEnd?: number;
   /** Per-count Lee-Enfield carriage plan. */
   rifle?: RiflePlan;
-  /** The halt salute's two movements: ONE raise, the standard pause, TWO cut. */
+  /** A salute's two movements: ONE raise, the standard pause, TWO cut. */
   salute?: boolean;
   /** This march continues the plant-to-plant phase out of a turn. */
   leadIn?: boolean;
@@ -372,7 +372,9 @@ export function buildTimeline(plan: Plan): Timeline {
         // A salute at the halt is complete in itself: ONE in a beat, the
         // standard pause holding it, TWO cutting it away in a beat. The
         // regular state duration would drop the pause and the cut.
-        if (instance.type === 'salute') duration = 2 * BEAT + STANDARD_PAUSE;
+        if (instance.type === 'salute' || instance.type === 'saluteAtSlope') {
+          duration = 2 * BEAT + STANDARD_PAUSE;
+        }
         break;
       }
       case 'turn': {
@@ -907,7 +909,8 @@ export function buildTimeline(plan: Plan): Timeline {
       steps,
       moveEnd,
       rifle: rifle ?? undefined,
-      salute: instance.type === 'salute' || undefined,
+      salute:
+        instance.type === 'salute' || instance.type === 'saluteAtSlope' || undefined,
       leadIn: marchLeadIn || undefined,
     });
 

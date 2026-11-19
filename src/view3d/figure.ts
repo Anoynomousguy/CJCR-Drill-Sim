@@ -15,8 +15,10 @@ import {
   DRESS_LEFT_RAISED,
   PIKE,
   POSTURE_HANDS,
+  armedSaluteHand,
   handIsGripping,
   levelElbow,
+  levelForearmElbow,
   lerpV,
   mixCarriage,
   poseTargets,
@@ -1202,17 +1204,30 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         if (gripL < 0.5) handL = swingHand(handL, swingL * armScale * blend * swing, Math.max(4, g.elbowL));
         if (gripR < 0.5) handR = swingHand(handR, swingR * armScale * blend * swing, Math.max(4, g.elbowR));
       }
-      // SALUTE (Ch 2, paras 37-38). The hand is placed after the swing so the
-      // marching swing cannot drag it down, and the explicit arm factor carries
-      // the halt salute through ONE, the standard pause and TWO's cut away.
+      // SALUTE. Without arms the hand goes to the headdress (Ch 2, paras
+      // 37-38). With a rifle it is a different movement: the right arm crosses
+      // the body and the hand strikes the small of the butt, back of the hand
+      // up (54-04 para 90). The hand is placed after the swing so the marching
+      // swing cannot drag it down, and the arm factor carries the movement
+      // through ONE, the standard pause and TWO's cut away.
       const saluteFromPosture =
         (anim.from.posture === 'salute' ? 1 - u : 0) + (anim.to.posture === 'salute' ? u : 0);
       const saluteArm =
         gripR < 0.5
           ? Math.max(saluteFromPosture, clamp01(anim.saluteArm ?? 0), saluting ? 1 : 0)
           : 0;
+      const rifleSalute = saluteArm > 0 && hasRifle && weaponFrame !== null;
       if (saluteArm > 0) {
-        handR = lerpV(POSTURE_HANDS.attention.right, POSTURE_HANDS.salute.right, saluteArm);
+        const saluteTarget = rifleSalute
+          ? armedSaluteHand(weaponFrame!)
+          : POSTURE_HANDS.salute.right;
+        handR = lerpV(POSTURE_HANDS.attention.right, saluteTarget, saluteArm);
+        if (rifleSalute) {
+          // The armed salute crosses the body in front of the tunic. A straight
+          // blend from the side would take the hand through the abdomen, so
+          // the transit bows forward and is square on the butt at the hold.
+          handR[2] += Math.sin(Math.PI * saluteArm) * 0.12;
+        }
       }
 
       const armAxisL = carrier ? new THREE.Vector3(...carrier.dir).normalize() : new THREE.Vector3(0, 1, 0);
@@ -1226,8 +1241,10 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         bar: THREE.Vector3,
         /** Right dress: hand closed as at attention, back of the hand up. */
         dressHand = false,
-        /** 0..1 salute: the upper arm level with the shoulder, palm down. */
+        /** 0..1 salute: the unarmed hand is at the headdress. */
         salute = 0,
+        /** This salute is given with a rifle: the forearm is level. */
+        saluteArmed = false,
       ) => {
         // The wrist sits a palm's thickness out from the rifle, so the palm
         // touches the bar and the fingers can close around it.
@@ -1278,7 +1295,8 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         // high, so solve the elbow on the horizon through the shoulder and
         // bring it in as the hand comes up.
         if (salute > 0.001) {
-          const level = levelElbow([S.x, S.y, S.z], [target[0], target[1], target[2]]);
+          const solve = saluteArmed ? levelForearmElbow : levelElbow;
+          const level = solve([S.x, S.y, S.z], [target[0], target[1], target[2]]);
           if (level) elbowPos.lerp(new THREE.Vector3(level[0], level[1], level[2]), salute);
         }
         const upperDir = elbowPos.clone().sub(S).normalize();
@@ -1332,7 +1350,16 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       const leftDressHand = dressRaised && hasRifle;
       const rightDressHand = dressRaised && !hasRifle;
       const leftArm = runArm(armL, handL, 1, gripL, armAxisL, leftDressHand);
-      const rightArm = runArm(armR, handR, -1, gripR, armAxisR, rightDressHand, saluteArm);
+      const rightArm = runArm(
+        armR,
+        handR,
+        -1,
+        gripR,
+        armAxisR,
+        rightDressHand,
+        saluteArm,
+        rifleSalute,
+      );
       curlL = leftArm.curl;
       curlR = rightArm.curl;
 

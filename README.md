@@ -100,9 +100,10 @@ A carried rifle is placed as a frame, not glued to a hand: a butt position and a
 in chest space, with the hands on the named grips — the small of the butt, the balance and the
 upper band. At the order the butt stands on the square and the right hand takes the upper band
 where a straight arm falls (0.90 m up the rifle); at the slope the barrel passes through the
-hollow of the left shoulder, the butt sits in the left hand at the hip and the right arm is
-free; at the present and the port the left hand is at the balance above the right hand at the
-small of the butt. Every grip is checked against the 51 cm reach of the arm and the rifle's
+hollow of the left shoulder and the butt sits in the left hand in front of and in line with the
+centre of the left shoulder, the left forearm parallel to the ground, the right arm free; at the
+present and the port the left hand is at the balance above the right hand at the small of the
+butt. Every grip is checked against the 51 cm reach of the arm and the rifle's
 1.13 m length. The colour is carried the same way on its 2.15 m pike.
 
 ### Checks
