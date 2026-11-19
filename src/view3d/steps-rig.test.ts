@@ -163,6 +163,7 @@ describe('step plans on the live rig', () => {
         dressing: true,
         dressT: t,
         eyesAmount: Math.max(0, Math.min(1, (t - 0.2) / 0.18)),
+        dressArm: true,
         code,
       });
     };
@@ -211,6 +212,7 @@ describe('step plans on the live rig', () => {
         dressing: true,
         dressT: t,
         eyesAmount: Math.max(0, Math.min(1, (t - 0.2) / 0.18)),
+        dressArm: true,
         code,
       });
       return { left: hand(fig, 'L'), right: hand(fig, 'R') };
@@ -254,12 +256,41 @@ describe('step plans on the live rig', () => {
         dressT: 0.6,
         eyesAmount: 1,
         role,
+        dressArm: false,
         code,
       });
       expect(hand(fig, 'R').y, role).toBeLessThan(1.05);
       expect(Math.abs(headYaw(fig)), role).toBeLessThan(4);
       fig.dispose();
     }
+  });
+
+  it('uses the sampled dress-arm flag, not the soldier’s rank', () => {
+    const fig = createFigure({ palette, detail: 'low' }, false, false);
+    const at = (dressArm: boolean) => {
+      fig.animate({
+        from: { ...BASE, eyes: 'right' },
+        to: { ...BASE, eyes: 'right' },
+        u: 1,
+        gait: 'halt',
+        stride: 0,
+        time: 0.6,
+        eyes: 'right',
+        headdress: 'worn',
+        dressing: true,
+        dressT: 0.6,
+        eyesAmount: 1,
+        dressArm,
+      });
+      return hand(fig, 'R').y;
+    };
+
+    // A rear-rank soldier who is in the current front rank after an about
+    // turn raises the arm. A former front-rank soldier who is now behind
+    // keeps it down. The sampled flag, not the old rank, decides.
+    expect(at(true)).toBeGreaterThan(1.25);
+    expect(at(false)).toBeLessThan(1.05);
+    fig.dispose();
   });
 
   it('bends the right knee over the raised right heel in a right dress', () => {

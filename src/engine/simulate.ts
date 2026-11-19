@@ -81,6 +81,8 @@ export interface Segment {
   eyesTurn?: 'right' | 'left' | 'front';
   /** This march continues the plant-to-plant phase out of a turn. */
   leadIn?: boolean;
+  /** Right dress: the current front-rank people who raise the dressing arm. */
+  dressArm?: string[];
 }
 
 export interface Timeline {
@@ -100,6 +102,8 @@ export interface SampledSoldier {
   gait: Gait;
   /** This cadet's own beat, arm swing and position-specific rules. */
   code: MovementCode;
+  /** Right dress: this person is in the current front rank and raises the arm. */
+  dressArm?: boolean;
 }
 
 export interface Sample {
@@ -173,10 +177,10 @@ function dressedLayout(
   spacing: Snapshot['spacing'],
   soldiers: Soldier[],
   local: LocalMap,
-): { targets: LocalMap; standFast: string | null } {
+): { targets: LocalMap; standFast: string | null; dressArm: string[] } {
   const homes = canonical(settings, roster, spacing);
   const ranks = soldiers.filter((s) => s.rank < 90);
-  if (!ranks.length) return { targets: homes, standFast: null };
+  if (!ranks.length) return { targets: homes, standFast: null, dressArm: [] };
   const current = (s: Soldier) => local[s.id] ?? { lx: s.lx, lz: s.lz };
   const home = (s: Soldier) => homes[s.id] ?? { lx: s.lx, lz: s.lz };
 
@@ -249,7 +253,14 @@ function dressedLayout(
     const c = rotate(home(s));
     targets[s.id] = { lx: c.lx + tx, lz: c.lz + tz };
   }
-  return { targets, standFast: standFast.id };
+  return {
+    targets,
+    standFast: standFast.id,
+    // The right-hand person stands fast; the rest of the current front rank
+    // raises the dressing arm. The old rank field is not used here: after a
+    // turn the front rank is a different set of people.
+    dressArm: front.filter((s) => s.id !== standFast.id).map((s) => s.id),
+  };
 }
 
 /** The feet left by the previous movement, in the new body frame. */
@@ -470,6 +481,7 @@ export function buildTimeline(plan: Plan): Timeline {
     let marchLeadIn = false;
     let marchDist = 0;
     let dressStandFast: string | null = null;
+    let dressArm: string[] | undefined;
 
     const prevSeg = segments[segments.length - 1];
     const prevMarchPlan = prevSeg?.steps
@@ -707,6 +719,7 @@ export function buildTimeline(plan: Plan): Timeline {
         );
         toLocal = dressed.targets;
         dressStandFast = dressed.standFast;
+        dressArm = dressed.dressArm;
         if (eff.eyes) toSnapshot.eyes = eff.eyes;
         if (eff.posture) toSnapshot.posture = eff.posture;
         duration = def.counts * BEAT + 2 * BEAT;
@@ -1155,6 +1168,8 @@ export function buildTimeline(plan: Plan): Timeline {
             ? 'march'
             : undefined,
       commanderSalute,
+      dressArm:
+        dressArm ?? (instance.type === 'eyesFront' ? prevSeg?.dressArm : undefined),
       eyesTurn:
         instance.type === 'eyesRight' || instance.type === 'saluteOnMarch'
           ? 'right'
@@ -1350,6 +1365,7 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
         : seg.mode === 'linear'
           ? distanceTravelled(seg.fromFrame, seg.fromLocal, frame, { [s.id]: { lx, lz } }, s.id)
           : 0;
+    const code = movementCode(s);
     return {
       soldier: s,
       x: w.x,
@@ -1357,7 +1373,8 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
       heading: bodyHeading + roleHeadingOffset(s.role, seg.toSnapshot.gait),
       stride: (seg.stride0[s.id] ?? 0) + travelled,
       gait,
-      code: movementCode(s),
+      code,
+      dressArm: seg.dressArm ? seg.dressArm.includes(s.id) : undefined,
     };
   });
 

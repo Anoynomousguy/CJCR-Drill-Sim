@@ -28,25 +28,16 @@ describe('per-cadet movement codes', () => {
     const marker = at('marker-id', 'marker', 0);
     expect(marker.phase).toBe(0);
     expect(marker.headFollow).toBe(0);
-    expect(marker.dressArm).toBe(false);
     expect(marker.leads).toBe(true);
     expect(isDirectingFlank('marker')).toBe(true);
     expect(isDirectingFlank('cadet')).toBe(false);
   });
 
-  it('dresses the front rank only, and never the marker', () => {
-    expect(at('cadet-a', 'cadet', 0).dressArm).toBe(true);
-    expect(at('cadet-b', 'cadet', 1).dressArm).toBe(false);
-    expect(at('cadet-c', 'cadet', 2).dressArm).toBe(false);
-    expect(at('marker', 'marker', 0).dressArm).toBe(false);
-    expect(at('wo', 'wo', 100).dressArm).toBe(false);
-  });
 
   it('lets the commander look and salute, but not dress with the ranks', () => {
     const commander = at('commander', 'commander', 99);
     expect(commander.headFollow).toBeGreaterThan(0);
     expect(commander.headFollow).toBeLessThan(0.6);
-    expect(commander.dressArm).toBe(false);
     expect(commander.leads).toBe(true);
   });
 

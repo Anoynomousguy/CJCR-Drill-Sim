@@ -103,6 +103,8 @@ export interface FigureAnim {
   dressing?: boolean;
   /** Progress through a right dress, for the per-count arm and head targets. */
   dressT?: number;
+  /** Right dress: this person is in the current front rank and raises the arm. */
+  dressArm?: boolean;
   /** 0..1 head/eye turn, so a dress looks right on count two, not on one. */
   eyesAmount?: number;
   /** 1 = right arm still held at the dressing position; cuts to 0 on EYES FRONT. */
@@ -121,7 +123,7 @@ export interface FigureAnim {
   rifle?: RifleSample;
   /** Who this is: the marker and commander do not move like the ranks. */
   role?: Role;
-  /** This soldier's own beat, dress rule and arm swing. */
+  /** This soldier's own beat and arm swing. */
   code?: MovementCode;
 }
 
@@ -1128,11 +1130,11 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         // already half-raised during the check pace, which is not the manual.
         const dressT = clamp01(anim.dressT ?? 1);
         const raise = clamp01((dressT - 0.2) / 0.18);
-        // The front rank raises an arm except the marker, who stands fast; the
-        // centre and rear ranks do not raise arms. With a rifle the right hand
-        // keeps it at the order and the free LEFT arm dresses; without arms the
-        // right arm dresses.
-        const raises = anim.code?.dressArm ?? true;
+        // The current front rank raises an arm except the right-hand person,
+        // who stands fast; the centre and rear ranks do not raise arms. With a
+        // rifle the right hand keeps it at the order and the free LEFT arm
+        // dresses; without arms the right arm dresses.
+        const raises = anim.dressArm ?? false;
         if (hasRifle) {
           const target = raises
             ? lerpV(POSTURE_HANDS.attention.left, DRESS_LEFT_RAISED, raise)
@@ -1367,7 +1369,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         ? clamp01((clamp01(anim.dressT ?? 1) - 0.2) / 0.18)
         : clamp01(anim.armFromDress ?? 0);
       const dressArm = (anim.dressing || anim.armFromDress !== undefined) && !hasColour;
-      const dressRaised = dressArm && (anim.code?.dressArm ?? true) && dressUp > 0.15;
+      const dressRaised = dressArm && (anim.dressArm ?? false) && dressUp > 0.15;
       const leftDressHand = dressRaised && hasRifle;
       const rightDressHand = dressRaised && !hasRifle;
       // The manual levels the left forearm wherever the rifle is carried on the

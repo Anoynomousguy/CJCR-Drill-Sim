@@ -23,6 +23,7 @@ function pose(
   role: Role,
   dressing = false,
   commanderSalute = 0,
+  dressArm = false,
 ) {
   const code = movementCode({ id: `test-${role}`, role, rank: role === 'commander' ? 99 : 0 });
   for (let i = 0; i < 30; i += 1) {
@@ -36,6 +37,7 @@ function pose(
       eyes: snapshot.eyes,
       headdress: snapshot.headdress,
       dressing,
+      dressArm,
       role,
       code,
       commanderSalute,
@@ -96,11 +98,11 @@ describe('position codes on the rig', () => {
     expect(Math.abs(headYaw(marker))).toBeLessThan(4);
   });
 
-  it('raises the right arm in right dress, except for the marker', () => {
+  it('raises the right arm for a marked front rank, except the right-hand person', () => {
     const cadet = createFigure({ palette, detail: 'low' }, false, false);
-    pose(cadet, BASE, 'cadet', true);
+    pose(cadet, BASE, 'cadet', true, 0, true);
     const marker = createFigure({ palette, detail: 'low' }, false, false);
-    pose(marker, BASE, 'marker', true);
+    pose(marker, BASE, 'marker', true, 0, false);
 
     expect(handHeight(cadet)).toBeGreaterThan(1.25);
     expect(handHeight(marker)).toBeLessThan(1.05);

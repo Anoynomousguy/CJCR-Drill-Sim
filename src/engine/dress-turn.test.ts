@@ -75,6 +75,45 @@ describe('right dress after a turn', () => {
     // rest of the squad instead of sliding 2.16 m across the square.
     expect(dress.steps?.[marker.id]).toBeDefined();
     expect(moved).toBeLessThan(0.35);
+
+    // The arm follows the current front rank, not the rank held at fall-in.
+    // The right-hand person stands fast; the rest of that rank raise an arm.
+    expect([...(dress.dressArm ?? [])].sort()).toEqual(
+      front
+        .filter((s) => s.id !== right.id)
+        .map((s) => s.id)
+        .sort(),
+    );
+    expect(dress.dressArm).not.toContain(marker.id);
+    for (const s of timeline.soldiers.filter((x) => x.rank === 0)) {
+      expect(dress.dressArm, s.id).not.toContain(s.id);
+    }
+    const mid = sampleTimeline(timeline, dress.start + (dress.actionEnd - dress.start) * 0.6);
+    for (const s of mid.soldiers) {
+      expect(s.dressArm, s.soldier.id).toBe(
+        Boolean(dress.dressArm?.includes(s.soldier.id)),
+      );
+    }
+  });
+
+  it('carries the current front rank into the EYES FRONT arm cut', () => {
+    const timeline = timelineOf([
+      'fallIn',
+      'attention',
+      'aboutTurn',
+      'rightDress',
+      'eyesFront',
+    ]);
+    const dress = timeline.segments.find((s) => s.type === 'rightDress')!;
+    const eyes = timeline.segments.find((s) => s.type === 'eyesFront')!;
+    expect(eyes.dressArm).toEqual(dress.dressArm);
+
+    const mid = sampleTimeline(timeline, eyes.start + (eyes.actionEnd - eyes.start) * 0.3);
+    for (const s of mid.soldiers) {
+      expect(s.dressArm, s.soldier.id).toBe(
+        Boolean(eyes.dressArm?.includes(s.soldier.id)),
+      );
+    }
   });
 
   it('does not walk the squad back after a run of in-place turns', () => {
@@ -121,6 +160,15 @@ describe('right dress after a turn', () => {
     const dressed = timeline.soldiers.filter((s) => s.role === 'cadet' || s.role === 'marker');
     for (const s of dressed) {
       expect(dress.toLocal[s.id], s.name).toBeDefined();
+    }
+
+    // A fresh dress still raises the arm on the fall-in front rank: the
+    // marker stands fast, the other front-rank cadets raise.
+    const frontRank = timeline.soldiers.filter((s) => s.rank === 0);
+    expect(dress.dressArm).toHaveLength(frontRank.length - 1);
+    for (const s of frontRank) {
+      if (s.role === 'marker') expect(dress.dressArm).not.toContain(s.id);
+      else expect(dress.dressArm).toContain(s.id);
     }
   });
 });

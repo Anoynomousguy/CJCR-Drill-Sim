@@ -226,6 +226,7 @@ export function Stage3D() {
           stride: s.stride,
           role: s.soldier.role,
           code: s.code,
+          dressArm: s.dressArm,
           time: now / 1000,
           eyes: dressing
             ? sample.to.eyes
