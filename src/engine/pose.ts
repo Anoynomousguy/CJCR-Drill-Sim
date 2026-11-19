@@ -140,16 +140,16 @@ export function saluteArmAt(raw: number): number {
  * up with the left foot on UP, is held through FIVE, is cut as the right foot
  * lands on DOWN, and the arms swing again from SWING on the left.
  *
- * A march segment's plants sit half a beat inside its ends (the seam between
- * two marches falls half a beat after the last plant), so the eight footfalls
- * are at 0.5 … 7.5 of the eight beats.
+ * The march before the salute ends on the left foot that gives the command, so
+ * this movement starts on that plant: its eight footfalls are one beat apart,
+ * the first a full beat after the command and the last on the final beat.
  */
-export const MARCH_SALUTE_UP = 1.5 / 8;
-export const MARCH_SALUTE_CUT = 5.5 / 8;
-export const MARCH_SALUTE_DOWN = 6.5 / 8;
-const MARCH_SALUTE_CHECK = 0.5 / 8;
-/** The SWING left footfall: the head is back to the front by then. */
-export const MARCH_SALUTE_SWING = 7.5 / 8;
+export const MARCH_SALUTE_UP = 2 / 8;
+export const MARCH_SALUTE_CUT = 6 / 8;
+export const MARCH_SALUTE_DOWN = 7 / 8;
+const MARCH_SALUTE_CHECK = 1 / 8;
+/** The SWING left footfall ends the movement: the head is front by then. */
+export const MARCH_SALUTE_SWING = 1;
 
 export function marchSaluteAt(raw: number): number {
   const t = clamp01(raw);

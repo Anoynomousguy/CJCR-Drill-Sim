@@ -109,19 +109,19 @@ describe('salute on the march on the live rig', () => {
     const id = saluteTimeline.soldiers[1].id;
 
     // CHECK: the arm is still swinging down at the side and the head is front.
-    drive(fig, saluteTimeline, salute.start + 0.25, id);
+    drive(fig, saluteTimeline, salute.start + 0.5, id);
     expect(bone(fig, 'hand.R').y, 'arm down on CHECK').toBeLessThan(1.2);
     expect(Math.abs(headYaw(fig)), 'head front on CHECK').toBeLessThan(5);
 
     // UP: the hand is on the headdress and the head turns into the salute.
-    for (let i = 0; i < 40; i += 1) drive(fig, saluteTimeline, salute.start + 0.75, id);
+    for (let i = 0; i < 40; i += 1) drive(fig, saluteTimeline, salute.start + 1.0, id);
     expect(Math.abs(headYaw(fig)), 'head turned right on UP').toBeGreaterThan(25);
     expect(bone(fig, 'hand.R').distanceTo(brow(fig)), 'hand at the headdress on UP').toBeLessThan(
       0.03,
     );
 
     // TWO through FIVE: still held.
-    for (const t of [1.25, 1.75, 2.25, 2.75]) {
+    for (const t of [1.5, 2.0, 2.5, 3.0]) {
       drive(fig, saluteTimeline, salute.start + t, id);
       expect(
         bone(fig, 'hand.R').distanceTo(brow(fig)),
@@ -130,11 +130,11 @@ describe('salute on the march on the live rig', () => {
     }
 
     // DOWN: cut to the side.
-    drive(fig, saluteTimeline, salute.start + 3.25, id);
+    drive(fig, saluteTimeline, salute.start + 3.5, id);
     expect(bone(fig, 'hand.R').y, 'arm cut on DOWN').toBeLessThan(1.2);
 
     // SWING: the head is back to the front with the arms.
-    for (let i = 0; i < 40; i += 1) drive(fig, saluteTimeline, salute.start + 3.75, id);
+    for (let i = 0; i < 40; i += 1) drive(fig, saluteTimeline, salute.start + 3.999, id);
     expect(Math.abs(headYaw(fig)), 'head front on SWING').toBeLessThan(5);
     fig.dispose();
   });

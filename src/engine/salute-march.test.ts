@@ -66,24 +66,25 @@ describe('salute on the march', () => {
   });
 
   it('raises the arm on UP, holds five footfalls, cuts on DOWN and swings on SWING', () => {
-    // Footfalls sit half a beat inside the ends: CHECK at 0.25 s, SWING at 3.75 s.
-    expect(at(0.25).saluteArm, 'CHECK, right foot').toBe(0);
-    expect(at(0.75).saluteArm, 'UP, left foot').toBe(1);
-    for (const t of [1.25, 1.75, 2.25, 2.75]) {
+    // The command foot is planted at the seam, so CHECK is a full pace later:
+    // 0.5 s, then one footfall every 0.5 s to SWING on the last beat.
+    expect(at(0.5).saluteArm, 'CHECK, right foot').toBe(0);
+    expect(at(1.0).saluteArm, 'UP, left foot').toBe(1);
+    for (const t of [1.5, 2.0, 2.5, 3.0]) {
       expect(at(t).saluteArm, `held at ${t} s`).toBe(1);
     }
-    expect(at(3.25).saluteArm, 'DOWN, right foot').toBe(0);
-    expect(at(3.75).saluteArm, 'SWING, left foot').toBe(0);
+    expect(at(3.5).saluteArm, 'DOWN, right foot').toBe(0);
+    expect(at(3.999).saluteArm, 'SWING, left foot').toBe(0);
     expect(at(4).saluteArm).toBe(0);
   });
 
   it('turns the head on UP and cuts it back to the front on SWING', () => {
-    expect(at(0.25).eyesAmount).toBe(0);
     expect(at(0.5).eyesAmount).toBe(0);
-    expect(at(0.75).eyesAmount).toBe(1);
+    expect(at(0.99).eyesAmount).toBe(0);
+    expect(at(1.0).eyesAmount).toBe(1);
     expect(at(2).eyesAmount).toBe(1);
-    expect(at(3.25).eyesAmount, 'DOWN, right foot').toBe(1);
-    expect(at(3.75).eyesAmount, 'SWING, left foot').toBe(0);
+    expect(at(3.5).eyesAmount, 'DOWN, right foot').toBe(1);
+    expect(at(3.999).eyesAmount, 'SWING, left foot').toBeCloseTo(0, 4);
     expect(at(4).eyesAmount).toBe(0);
   });
 

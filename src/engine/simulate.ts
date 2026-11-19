@@ -77,6 +77,8 @@ export interface Segment {
   salute?: 'halt' | 'march';
   /** The commander's eyes-right salute; EYES FRONT cuts it. */
   commanderSalute?: 'raise' | 'hold' | 'cut';
+  /** A head movement on the march: right turns the head out, front cuts it back. */
+  eyesTurn?: 'right' | 'front';
   /** This march continues the plant-to-plant phase out of a turn. */
   leadIn?: boolean;
 }
@@ -366,9 +368,28 @@ export function buildTimeline(plan: Plan): Timeline {
     let marchLeadIn = false;
     let marchDist = 0;
 
+    const prevSeg = segments[segments.length - 1];
+    const prevMarchPlan = prevSeg?.steps
+      ? Object.values(prevSeg.steps).find((p) => p.kind === 'march')
+      : undefined;
+    // A march that closes with the half pace putting the squad on the command's
+    // foot ends ON a footfall. The next movement then starts a full beat after
+    // that plant, not half a beat after it: without this the first step of a
+    // salute or an eyes right was a half-beat quick step at the seam.
+    const prevEndsOnPlant = Boolean(
+      prevMarchPlan &&
+        [...prevMarchPlan.left, ...prevMarchPlan.right].some(
+          (p) => Math.abs(p.land - 1) < 1e-6,
+        ),
+    );
+
     const paces = Math.max(1, Number(params.paces ?? 1));
+    // EYES RIGHT and EYES FRONT on the march are two paces: the command's left
+    // foot, the right foot's pace, and the left foot landing again as the head
+    // turns or cuts (Ch 3, paras 89-90).
+    const eyesMarch = instance.type === 'eyesRight' || instance.type === 'eyesFrontMarch';
     // A salute on the march is eight paces (Ch 3), not a user parameter.
-    const paceCount = def.kind === 'saluteMarch' ? def.counts : paces;
+    const paceCount = def.kind === 'saluteMarch' || eyesMarch ? def.counts : paces;
 
     switch (def.kind) {
       case 'state':
@@ -504,16 +525,16 @@ export function buildTimeline(plan: Plan): Timeline {
         // full beat later, not half a beat, or the squad takes a quick little
         // step out of every turn. Once in this phase the following marches
         // keep it: each one ends on a plant.
-        const prevSeg = segments[segments.length - 1];
         marchLeadIn =
           fromSnapshot.gait !== 'halt' &&
           scope !== 'colourParty' &&
-          Boolean(
-            prevSeg?.turn?.march ||
-              prevSeg?.turn?.about ||
-              prevSeg?.leadIn ||
-              prevSeg?.type === 'changeStep',
-          );
+          (prevEndsOnPlant ||
+            Boolean(
+              prevSeg?.turn?.march ||
+                prevSeg?.turn?.about ||
+                prevSeg?.leadIn ||
+                prevSeg?.type === 'changeStep',
+            ));
         if (scope === 'colourParty') {
           for (const s of soldiers) {
             if (s.role === 'colourOfficer' || s.role === 'colourEscort') {
@@ -659,13 +680,14 @@ export function buildTimeline(plan: Plan): Timeline {
         toFrame.x += f.x * dist;
         toFrame.z += f.z * dist;
         marchDist = dist;
-        const prevSeg = segments[segments.length - 1];
-        marchLeadIn = Boolean(
-          prevSeg?.turn?.march ||
-            prevSeg?.turn?.about ||
-            prevSeg?.leadIn ||
-            prevSeg?.type === 'changeStep',
-        );
+        marchLeadIn =
+          prevEndsOnPlant ||
+          Boolean(
+            prevSeg?.turn?.march ||
+              prevSeg?.turn?.about ||
+              prevSeg?.leadIn ||
+              prevSeg?.type === 'changeStep',
+          );
         if (fromSnapshot.gait !== 'quick') {
           warnings.push({
             moveIndex: index,
@@ -679,6 +701,39 @@ export function buildTimeline(plan: Plan): Timeline {
       }
       default:
         break;
+    }
+
+    // --- head movements on the march ----------------------------------------
+    // A freeze is not EYES RIGHT: the squad keeps marching through the command,
+    // covers the two paces the manual counts, and turns the head as the left
+    // foot lands again at the end of the second one.
+    if (eyesMarch) {
+      toSnapshot.posture = 'attention';
+      const len = stepLength(toSnapshot);
+      const cadence = cadenceOf(toSnapshot.gait, settings.cadence);
+      duration = (def.counts * 60) / cadence;
+      const f = forwardOf(frame.heading);
+      const dist = marchTravel(def.counts, len, fromSnapshot.gait === 'halt');
+      toFrame.x += f.x * dist;
+      toFrame.z += f.z * dist;
+      marchDist = dist;
+      marchLeadIn =
+        prevEndsOnPlant ||
+        Boolean(
+          prevSeg?.turn?.march ||
+            prevSeg?.turn?.about ||
+            prevSeg?.leadIn ||
+            prevSeg?.type === 'changeStep',
+        );
+      if (fromSnapshot.gait !== 'quick') {
+        warnings.push({
+          moveIndex: index,
+          moveId: instance.id,
+          severity: 'info',
+          message: `${def.title}: the on-the-march head movement is modelled; the squad is ${fromSnapshot.gait === 'halt' ? 'halted' : `in ${fromSnapshot.gait} time`}.`,
+        });
+      }
+      mode = 'linear';
     }
 
     // --- count-sampled rifle carriages -------------------------------------
@@ -704,6 +759,7 @@ export function buildTimeline(plan: Plan): Timeline {
       def.kind === 'pace' ||
       def.kind === 'march' ||
       def.kind === 'saluteMarch' ||
+      eyesMarch ||
       def.kind === 'order' ||
       def.kind === 'halt' ||
       def.kind === 'dress' ||
@@ -724,6 +780,7 @@ export function buildTimeline(plan: Plan): Timeline {
           def.kind === 'pace' ||
           def.kind === 'march' ||
           def.kind === 'saluteMarch' ||
+          eyesMarch ||
           def.kind === 'halt';
         const dx = useFrame ? toFrame.x - fromFrame.x : b.lx - a.lx;
         const dz = useFrame ? toFrame.z - fromFrame.z : b.lz - a.lz;
@@ -765,7 +822,7 @@ export function buildTimeline(plan: Plan): Timeline {
                 ? makeSlowHaltPlan({ startLeft: start.left, startRight: start.right })
                 : makeHaltPlan({ startLeft: start.left, startRight: start.right });
           }
-        } else if (def.kind === 'march' || def.kind === 'saluteMarch') {
+        } else if (def.kind === 'march' || def.kind === 'saluteMarch' || eyesMarch) {
           // Continue from the exact boots the last movement left, and finish on
           // the foot the next command names, so no seam snaps a planted foot.
           const start = priorStart(
@@ -875,7 +932,7 @@ export function buildTimeline(plan: Plan): Timeline {
       }
     }
 
-    if ((def.kind === 'march' || def.kind === 'saluteMarch') && steps) {
+    if ((def.kind === 'march' || def.kind === 'saluteMarch' || eyesMarch) && steps) {
       const leadPlan = Object.values(steps).find((p) => p.kind === 'march');
       if (leadPlan) {
         // A lead-in closes the offset the turn left the body with, and a
@@ -980,6 +1037,12 @@ export function buildTimeline(plan: Plan): Timeline {
             ? 'march'
             : undefined,
       commanderSalute,
+      eyesTurn:
+        instance.type === 'eyesRight'
+          ? 'right'
+          : instance.type === 'eyesFrontMarch'
+            ? 'front'
+            : undefined,
       leadIn: marchLeadIn || undefined,
     });
 
@@ -1196,12 +1259,19 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
         ? marchSaluteAt(raw)
         : saluteArmAt(raw)
       : undefined,
-    eyesAmount: seg.salute === 'march' ? marchSaluteEyesAt(raw) : undefined,
+    eyesAmount:
+      seg.salute === 'march'
+        ? marchSaluteEyesAt(raw)
+        : seg.eyesTurn === 'right'
+          ? smoothstep(Math.max(0, Math.min(1, (raw - 0.5) * 2)))
+          : seg.eyesTurn === 'front'
+            ? 1 - smoothstep(Math.max(0, Math.min(1, (raw - 0.5) * 2)))
+            : undefined,
     commanderSalute:
       seg.commanderSalute === 'raise'
-        ? smoothstep(raw)
+        ? smoothstep(Math.max(0, Math.min(1, (raw - 0.5) * 2)))
         : seg.commanderSalute === 'cut'
-          ? 1 - smoothstep(raw)
+          ? 1 - smoothstep(Math.max(0, Math.min(1, raw * 2)))
           : seg.commanderSalute === 'hold'
             ? 1
             : undefined,

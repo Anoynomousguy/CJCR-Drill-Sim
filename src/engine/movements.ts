@@ -579,7 +579,7 @@ const footMarch: MoveDef[] = [
     kind: 'eyes',
     counts: 2,
     effect: { eyes: 'right' },
-    help: 'Head and eyes turn right as far as possible without straining; shoulders stay square.',
+    help: 'Given on the left foot: complete the next pace with the right foot and turn the head and eyes right as the left foot lands at the end of the second pace. The squad keeps marching and swinging its arms; the commander salutes.',
   },
   {
     type: 'eyesFrontMarch',
@@ -590,7 +590,7 @@ const footMarch: MoveDef[] = [
     kind: 'eyes',
     counts: 2,
     effect: { eyes: 'front' },
-    help: 'Head and eyes snap to the front.',
+    help: 'Given on the left foot: complete the next pace with the right foot and cut the head and eyes smartly to the front as the left foot lands. The commander checks his arms to his sides on the right foot and swings again with the left.',
   },
 ];
 
