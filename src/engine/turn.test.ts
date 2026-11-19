@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from './constants';
 import { LEG } from './gait';
 import { buildTimeline, sampleTimeline } from './simulate';
-import { makeTurnPlan, turnFootwork, turnHeadingAt } from './turn';
+import {
+  makeTurnPlan,
+  turnBodyAt,
+  turnFootContact,
+  turnFootwork,
+  turnHeadingAt,
+} from './turn';
 import type { Plan } from './types';
 
 const settings = {
@@ -58,8 +64,12 @@ describe('turn plans', () => {
 
     const about = makeTurnPlan('aboutMarch', 180, 'right');
     expect(about.phases.map((p) => p.key)).toEqual(['check', 'pivot1', 'pivot2', 'step']);
-    expect(turnHeadingAt(about, 0.46)).toBeCloseTo(0.5, 6);
-    expect(turnHeadingAt(about, 0.72)).toBeCloseTo(1, 6);
+    // Five beats: half pace and the right foot in, then one 90 for each ball
+    // pivot, then the step off.
+    expect(turnHeadingAt(about, 0.4)).toBe(0);
+    expect(turnHeadingAt(about, 0.6)).toBeCloseTo(0.5, 6);
+    expect(turnHeadingAt(about, 0.8)).toBeCloseTo(1, 6);
+    expect(turnHeadingAt(about, 1)).toBe(1);
   });
 });
 
@@ -72,8 +82,9 @@ describe('turn footwork', () => {
     expect(pivot.left.pitch).toBeGreaterThan(2);
     expect(pivot.left.planted).toBe(true);
     expect(pivot.left.lift).toBeGreaterThan(0.01);
-    expect(pivot.headYaw).toBeGreaterThan(pivot.chestYaw);
-    expect(pivot.chestYaw).toBeGreaterThan(0);
+    // The halt turn is body erect: no chest lead is layered on the pivot.
+    expect(pivot.headYaw).toBe(0);
+    expect(pivot.chestYaw).toBe(0);
 
     const close = turnFootwork(plan, 0.84);
     expect(close.left.planted).toBe(false);
@@ -118,7 +129,57 @@ describe('turn footwork', () => {
     const pivot = turnFootwork(plan, 0.2);
     expect(pivot.left.pitch).toBeLessThan(-2);
     expect(pivot.right.pitch).toBeGreaterThan(2);
-    expect(pivot.chestYaw).toBeLessThan(0);
+    expect(pivot.chestYaw).toBe(0);
+  });
+
+  it('fixes the right heel and left ball in the world through the pivot', () => {
+    for (const [degrees, dir] of [
+      [90, 'right'],
+      [90, 'left'],
+      [180, 'right'],
+      [45, 'right'],
+    ] as const) {
+      const plan = makeTurnPlan('halt', degrees, dir);
+      const start = turnBodyAt(plan, 0)!;
+      const heel = turnFootContact(start, 0, plan.pivot, 'heel');
+      const ball = turnFootContact(start, 0, plan.outside, 'ball');
+      expect(heel.y).toBeCloseTo(0, 6);
+      expect(ball.y).toBeCloseTo(0, 6);
+      const pivotEnd = plan.phases.find((p) => p.key === 'pivot')!.end;
+      for (const p of [0.05, 0.15, 0.28, 0.4, pivotEnd - 0.01]) {
+        const body = turnBodyAt(plan, p)!;
+        const rel = ((plan.angle * 180) / Math.PI) * turnHeadingAt(plan, p);
+        const h = turnFootContact(body, rel, plan.pivot, 'heel');
+        const b = turnFootContact(body, rel, plan.outside, 'ball');
+        expect(Math.hypot(h.x - heel.x, h.z - heel.z), `${dir}${degrees} heel ${p}`).toBeLessThan(1e-6);
+        expect(Math.hypot(b.x - ball.x, b.z - ball.z), `${dir}${degrees} ball ${p}`).toBeLessThan(1e-6);
+        // Both feet are still carrying the pivot: neither boot is a skate.
+        expect(body.left.planted && body.right.planted, `${dir}${degrees} ${p}`).toBe(true);
+        expect(body.hipY).toBeLessThanOrEqual(0.94);
+      }
+    }
+  });
+
+  it('closes the outside boot and leaves the pivot contact fixed', () => {
+    const plan = makeTurnPlan('halt', 90, 'right');
+    const start = turnBodyAt(plan, 0)!;
+    const heel = turnFootContact(start, 0, 'R', 'heel');
+    const relEnd = (plan.angle * 180) / Math.PI;
+    const middle = turnBodyAt(plan, 0.85)!;
+    expect(middle.left.planted).toBe(false);
+    expect(Math.abs(turnFootContact(middle, relEnd, 'R', 'heel').x - heel.x)).toBeLessThan(1e-6);
+    expect(Math.abs(turnFootContact(middle, relEnd, 'R', 'heel').z - heel.z)).toBeLessThan(1e-6);
+
+    const done = turnBodyAt(plan, 1)!;
+    expect(done.left.planted && done.right.planted).toBe(true);
+    expect(done.left.x).toBeCloseTo(LEG.standX, 6);
+    expect(done.right.x).toBeCloseTo(-LEG.standX, 6);
+    expect(done.left.z).toBeCloseTo(0, 6);
+    expect(done.right.z).toBeCloseTo(0, 6);
+    expect(done.left.pitch).toBeCloseTo(0, 6);
+    expect(done.right.pitch).toBeCloseTo(0, 6);
+    expect(Math.abs(turnFootContact(done, relEnd, 'R', 'heel').x - heel.x)).toBeLessThan(1e-6);
+    expect(Math.abs(turnFootContact(done, relEnd, 'R', 'heel').z - heel.z)).toBeLessThan(1e-6);
   });
 
   it('checks, pivots on the inside ball and cuts the arms on a march', () => {
@@ -138,12 +199,14 @@ describe('turn footwork', () => {
 
   it('pivots on alternate feet for an about turn on the march', () => {
     const plan = makeTurnPlan('aboutMarch', 180, 'right');
-    const first = turnFootwork(plan, 0.34);
+    // The first ball is taken on the third beat, once the right boot has come
+    // in beside the left; the second ball follows on the fourth beat.
+    const first = turnFootwork(plan, 0.5);
     expect(first.right.pitch).toBeGreaterThan(2);
     expect(first.left.planted).toBe(false);
     expect(first.left.lift).toBeGreaterThan(0.05);
 
-    const second = turnFootwork(plan, 0.6);
+    const second = turnFootwork(plan, 0.7);
     expect(second.left.pitch).toBeGreaterThan(2);
     expect(second.right.planted).toBe(false);
     expect(second.right.lift).toBeGreaterThan(0.05);
@@ -168,9 +231,11 @@ describe('parade turns', () => {
     const end = sampleTimeline(timeline, seg.actionEnd - 0.001);
     const startHeading = start.soldiers[0].heading;
 
+    // A real heel/toe pivot moves the body centre a few centimetres; what must
+    // not happen is the whole formation orbiting the frame origin.
     for (let i = 0; i < start.soldiers.length; i += 1) {
-      expect(distance(start.soldiers[i], mid.soldiers[i]), `cadet ${i} mid`).toBeLessThan(1e-6);
-      expect(distance(start.soldiers[i], end.soldiers[i]), `cadet ${i} end`).toBeLessThan(1e-6);
+      expect(distance(start.soldiers[i], mid.soldiers[i]), `cadet ${i} mid`).toBeLessThan(0.12);
+      expect(distance(start.soldiers[i], end.soldiers[i]), `cadet ${i} end`).toBeLessThan(0.15);
     }
     expect(Math.abs(mid.soldiers[0].heading - startHeading)).toBeGreaterThan(0.1);
     expect(Math.abs(mid.soldiers[0].heading - end.soldiers[0].heading)).toBeGreaterThan(0.001);
@@ -191,7 +256,7 @@ describe('parade turns', () => {
     }
   });
 
-  it('handles the left turn and the 180 about turn without moving the slots', () => {
+  it('handles the left turn and the 180 about turn without orbiting the slots', () => {
     for (const [type, expected] of [
       ['leftTurn', 90],
       ['aboutTurn', 180],
@@ -203,11 +268,35 @@ describe('parade turns', () => {
       const start = sampleTimeline(timeline, seg.start + 0.001);
       const end = sampleTimeline(timeline, seg.actionEnd - 0.001);
       for (let i = 0; i < start.soldiers.length; i += 1) {
-        expect(distance(start.soldiers[i], end.soldiers[i]), `${type} cadet ${i}`).toBeLessThan(1e-6);
+        expect(distance(start.soldiers[i], end.soldiers[i]), `${type} cadet ${i}`).toBeLessThan(0.3);
       }
       const turned = Math.abs(end.soldiers[0].heading - start.soldiers[0].heading) * (180 / Math.PI);
       expect(Math.abs(turned - expected)).toBeLessThan(0.01);
     }
+  });
+
+  it('carries the stride and arm swing through a marching seam without a frozen pause', () => {
+    const timeline = timelineOf([
+      move('quickMarch', { paces: 4 }),
+      move('rightTurnOnMarch'),
+      move('quickMarch', { paces: 4 }),
+    ]);
+    const first = timeline.segments.find((s) => s.type === 'quickMarch')!;
+    const turn = timeline.segments.find((s) => s.type === 'rightTurnOnMarch')!;
+    // The squad is still marching: the command does not add a standing pause.
+    expect(first.end).toBeCloseTo(first.actionEnd, 6);
+    expect(turn.end).toBeCloseTo(turn.actionEnd, 6);
+
+    // The turn itself cuts the arms for the pivot; the seam that used to freeze
+    // is the end of the turn running into the next marching command.
+    const before = sampleTimeline(timeline, turn.actionEnd - 0.01);
+    // Half a beat after the command: the first step is a full beat long, so
+    // this is the point by which the stride must visibly be running again.
+    const after = sampleTimeline(timeline, turn.actionEnd + 0.25);
+    expect(before.soldiers[0].gait).toBe('quick');
+    expect(after.soldiers[0].gait).toBe('quick');
+    expect(after.soldiers[0].stride - before.soldiers[0].stride).toBeGreaterThan(0.2);
+    expect(before.soldiers[0].stride).toBeGreaterThan(0);
   });
 
   it('arcs the formation through a turn on the march without snapping the heading', () => {

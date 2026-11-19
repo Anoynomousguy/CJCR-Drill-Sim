@@ -12,8 +12,11 @@ import {
   ARM_MAX_REACH,
   BODY,
   DRESS_HANDS,
+  DRESS_LEFT_RAISED,
   PIKE,
+  POSTURE_HANDS,
   handIsGripping,
+  lerpV,
   mixCarriage,
   poseTargets,
   swingHand,
@@ -22,6 +25,7 @@ import {
   type Vec3,
 } from '../engine/pose';
 import {
+  GAIT_SPEC,
   LEG,
   blendTargets,
   gaitCycle,
@@ -32,8 +36,11 @@ import {
   type FootTarget,
   type GaitTargets,
 } from '../engine/gait';
+import { PACE_HALF } from '../engine/constants';
 import { turnFootwork, type TurnFootwork, type TurnPlan } from '../engine/turn';
-import type { Snapshot } from '../engine/types';
+import type { RifleSample } from '../engine/rifle';
+import type { MovementCode } from '../engine/individual';
+import type { Role, Snapshot } from '../engine/types';
 import {
   MUSCLES,
   muscleActivationFor,
@@ -90,8 +97,24 @@ export interface FigureAnim {
   eyes: Snapshot['eyes'];
   headdress: Snapshot['headdress'];
   dressing?: boolean;
+  /** Progress through a right dress, for the per-count arm and head targets. */
+  dressT?: number;
+  /** 0..1 head/eye turn, so a dress looks right on count two, not on one. */
+  eyesAmount?: number;
+  /** 1 = right arm still held at the dressing position; cuts to 0 on EYES FRONT. */
+  armFromDress?: number;
+  /** Explicit feet from the step-plan engine, in body space, with solved pelvis height. */
+  feet?: { left: FootTarget; right: FootTarget; hipY: number };
+  /** 0..1 arm hold for a movement that cuts the arms to the sides (change step). */
+  armCut?: number;
   /** A commanded turn's manual breakdown; omit for free-standing turns. */
   turn?: { plan: TurnPlan; progress: number };
+  /** Count-sampled Lee-Enfield carriage and hand grips. */
+  rifle?: RifleSample;
+  /** Who this is: the marker and commander do not move like the ranks. */
+  role?: Role;
+  /** This soldier's own beat, dress rule and arm swing. */
+  code?: MovementCode;
 }
 
 export interface FigureFoot {
@@ -143,11 +166,19 @@ function frameQuat(proximal: THREE.Vector3, forward: THREE.Vector3, out = new TH
   return out.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
 }
 
-/** Orient a limb so its local -Y points along `bone`. */
+/**
+ * Orient a limb so its local -Y points along `bone` and local +Z stays as
+ * close to forward as the bone allows. The forward reference matters: the knee
+ * and elbow are hinges about local X, so if the frame rolls when a limb tilts,
+ * a positive flexion bends the wrong way. Using world up for a tilted femur
+ * made the shin swing forward as the knee flexed and the foot fell 15 cm short
+ * of its target; world forward is stable through the whole stride.
+ */
 function limbQuat(bone: THREE.Vector3): THREE.Quaternion {
   const y = bone.clone().negate().normalize();
-  const up = Math.abs(y.y) > 0.98 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
-  const z = up.clone().addScaledVector(y, -up.dot(y)).normalize();
+  const ref = new THREE.Vector3(0, 0, 1);
+  if (Math.abs(ref.dot(y)) > 0.98) ref.set(0, 1, 0);
+  const z = ref.clone().addScaledVector(y, -ref.dot(y)).normalize();
   const x = new THREE.Vector3().crossVectors(y, z).normalize();
   return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
 }
@@ -287,8 +318,6 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   // narrow placket and buttons instead of two slabs, and epaulettes that sit on
   // the slope of the trapezius instead of floating above it.
   add(chest, rbox(0.034, 0.3, 0.016, 0.008), mats.tunicShade, [0, 0.135, 0.112]);
-  add(chest, rbox(0.09, 0.012, 0.05, 0.006), mats.tunicShade, [-0.108, 0.255, 0.004], [0, 0, 0.42]);
-  add(chest, rbox(0.09, 0.012, 0.05, 0.006), mats.tunicShade, [0.108, 0.255, 0.004], [0, 0, -0.42]);
   add(chest, rbox(0.075, 0.055, 0.025, 0.012), mats.shirt, [0, 0.262, 0.072]);
   const collar = add(
     chest,
@@ -301,7 +330,6 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
     for (let i = 0; i < 4; i += 1) {
       add(chest, new THREE.SphereGeometry(0.011, 8, 8), mats.badge, [0.0, 0.0 + i * 0.068, 0.118]);
     }
-    add(chest, rbox(0.03, 0.2, 0.1, 0.012), mats.brassard, [-0.192, 0.12, 0.0]);
   }
 
   add(chest, rbox(0.045, 0.24, 0.025, 0.01), mats.bone, [0, 0.15, 0.1], undefined, 'bone');
@@ -482,6 +510,16 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   const armL = makeArm(1);
   const armR = makeArm(-1);
 
+  // Epaulettes belong to the shoulder girdle, not the chest. Parented to the
+  // clavicle they lie along the turned shoulder line and lift with the
+  // scapulohumeral rhythm; on the chest they stayed put and stood up as pads
+  // whenever the thorax rotated away from the arms.
+  // Seated on the deltoid: the strap's top measures <=3 mm above the skinned
+  // surface at its own footprint, so it reads as a sewn shoulder strap rather
+  // than a pad hovering over the shoulder.
+  add(armL.clav, rbox(0.086, 0.012, 0.05, 0.005), mats.tunicShade, [0.15, 0.046, 0.0], [0, 0, -0.24]);
+  add(armR.clav, rbox(0.086, 0.012, 0.05, 0.005), mats.tunicShade, [-0.15, 0.046, 0.0], [0, 0, 0.24]);
+
   // ==================================================================== legs
   interface LegRig {
     hip: THREE.Bone;
@@ -551,6 +589,38 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
     activation: number;
   }
   const muscles: MuscleRig[] = [];
+
+  // Room for a belly between the bone axis and the skin, by region. A belly is
+  // fitted inside this envelope every frame: it hangs under the surface, it
+  // does not sprout through it.
+  const MUSCLE_ROOM: Record<MuscleDef['region'], number> = {
+    hip: 0.096,
+    thigh: 0.082,
+    shank: 0.054,
+    foot: 0.046,
+    trunk: 0.1,
+    shoulder: 0.071,
+    arm: 0.046,
+    neck: 0.054,
+  };
+  const axisA = new THREE.Vector3();
+  const axisB = new THREE.Vector3();
+  const boneHead = (obj: THREE.Object3D, out: THREE.Vector3) =>
+    body.worldToLocal(obj.getWorldPosition(out));
+  const muscleAxis = (def: MuscleDef, a: THREE.Vector3, b: THREE.Vector3) => {
+    const leg = def.side === 'L' ? legL : legR;
+    const arm = def.side === 'L' ? armL : armR;
+    switch (def.region) {
+      case 'thigh': boneHead(leg.hip, a); boneHead(leg.knee, b); break;
+      case 'shank': boneHead(leg.knee, a); boneHead(leg.ankle, b); break;
+      case 'foot': boneHead(leg.ankle, a); boneHead(leg.toe, b); break;
+      case 'arm': boneHead(arm.upper, a); boneHead(arm.elbow, b); break;
+      case 'shoulder': boneHead(chest, a); boneHead(arm.clav, b); break;
+      case 'hip': boneHead(pelvis, a); boneHead(leg.hip, b); break;
+      case 'neck': boneHead(neck, a); boneHead(head, b); break;
+      default: boneHead(pelvis, a); boneHead(chest, b); break;
+    }
+  };
   // A belly, not a wire: a spindle that tapers into its tendons at both ends
   // and is fattest a little above the middle where the fibres bunch.
   const muscleGeo = new THREE.LatheGeometry(
@@ -577,6 +647,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   ) => {
     const mesh = add(body, muscleGeo, mats.muscle, [0, 0, 0], undefined, 'muscle');
     mesh.castShadow = false;
+    mesh.userData.deep = !!def.deep;
     const rig: MuscleRig = {
       def,
       mesh,
@@ -605,11 +676,15 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
     // over the chest.
     const brassard = add(
       armL.upper,
-      new THREE.CylinderGeometry(0.057, 0.057, 0.095, 16, 1, true),
+      new THREE.CylinderGeometry(0.06, 0.06, 0.095, 18, 1, true),
       mats.brassard,
       [0, -0.085, 0],
     );
-    brassard.scale.z = 0.86;
+    brassard.scale.z = 0.91;
+    // A 1 cm stand-off shell inside the shadow map only produced a hard black
+    // polygon across the band, so it neither casts nor receives shadow.
+    brassard.castShadow = false;
+    brassard.receiveShadow = false;
   }
 
   // ============================================================== skin
@@ -678,11 +753,12 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
     // A belly has volume: real quadriceps are seven or eight centimetres
     // across, not two. The table carries the fibre radius; the drawn belly is
     // that radius at full bulge.
-    addMuscle(originBone, [pa.x, pa.y, pa.z], insertBone, [pb.x, pb.y, pb.z], def.radius * 1.5, def);
+    addMuscle(originBone, [pa.x, pa.y, pa.z], insertBone, [pb.x, pb.y, pb.z], def.radius * 1.15, def);
   }
 
   // ======================================================= rifle / colour
   const weapon = new THREE.Group();
+  weapon.name = 'weapon';
   chest.add(weapon);
   add(weapon, rbox(0.054, 0.3, 0.08, 0.02), mats.rifleWood, [0, 0.15, 0]);
   add(weapon, rbox(0.052, 0.022, 0.082, 0.008), mats.rifleMetal, [0, 0.013, 0]);
@@ -700,6 +776,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   add(weapon, rbox(0.008, 0.42, 0.012, 0.003), mats.belt, [0, 0.34, -0.042]);
 
   const colour = new THREE.Group();
+  colour.name = 'colour';
   chest.add(colour);
   add(colour, new THREE.CylinderGeometry(0.016, 0.018, PIKE.length, 10), mats.rifleWood, [0, PIKE.length / 2, 0]);
   add(colour, new THREE.CylinderGeometry(0.02, 0.016, 0.06, 10), mats.badge, [0, PIKE.length - 0.02, 0]);
@@ -722,18 +799,33 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
   let mode: BodyMode = 'uniform';
 
   const applyMode = () => {
-    const showUniform = mode === 'uniform' || mode === 'xray';
+    // The muscle view keeps the body on screen as a ghost. Without it the
+    // bellies look like loose spindles; through it, they read as anatomy under
+    // the skin, and anything that pokes out is immediately visible.
+    const showUniform = mode !== 'skeleton';
     uniformMeshes.forEach((m) => (m.visible = showUniform));
     skeletonMeshes.forEach((m) => (m.visible = mode !== 'uniform'));
-    muscleMeshes.forEach((m) => (m.visible = mode === 'muscles'));
-    const xray = mode === 'xray';
+    const muscleOn = (m: THREE.Object3D) => {
+      m.visible = mode === 'muscles' && !(m.userData.deep as boolean | undefined);
+    };
+    muscleMeshes.forEach(muscleOn);
+    const transparent = mode !== 'uniform';
+    const alpha = mode === 'xray' ? 0.16 : mode === 'muscles' ? 0.16 : 1;
+    // The tunic is dark navy; at 16% over a dark square it disappears. A faint
+    // blue self-light keeps the ghost of the body readable so the muscles sit
+    // inside a silhouette instead of floating in the dark.
+    const ghostLift = mode === 'muscles';
     uniformMats.forEach((m) => {
-      if (m.transparent !== xray) {
-        m.transparent = xray;
+      if (m.transparent !== transparent) {
+        m.transparent = transparent;
         m.needsUpdate = true;
       }
-      m.opacity = xray ? 0.16 : 1;
-      m.depthWrite = !xray;
+      m.opacity = alpha;
+      m.depthWrite = !transparent;
+      if (m.emissive) {
+        m.emissive.set(ghostLift ? '#24384c' : '#000000');
+        m.emissiveIntensity = ghostLift ? 1 : 0;
+      }
     });
   };
   applyMode();
@@ -870,14 +962,18 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       if (want === 0 && blend < 0.002) blend = 0;
       if (want === 1 && blend > 0.998) blend = 1;
       const stand = standTargets();
-      const cycle = gaitCycle(anim.gait, anim.stride, anim.time);
+      // Every cadet steps on their own beat. The offset is a fraction of a
+      // cycle, so the formation reads as people keeping time together, not as
+      // one body cloned thirty times.
+      const rawCycle = gaitCycle(anim.gait, anim.stride, anim.time);
+      const cycle = (((rawCycle - (anim.code?.phase ?? 0)) % 1) + 1) % 1;
       const live = gaitTargets(anim.gait, cycle);
       const g: GaitTargets = blendTargets(stand, live, blend);
       const turnWeight = 1 - blend * 0.6;
 
       // foot overlays for the pivot
-      const footL: FootTarget = { ...g.left };
-      const footR: FootTarget = { ...g.right };
+      let footL: FootTarget = { ...g.left };
+      let footR: FootTarget = { ...g.right };
       if (commanded) {
         // The command supplies the exact foot: heel/toe pivot, close, check
         // and step. No generic step-around is layered on top of it.
@@ -903,6 +999,13 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         step.yaw += freeTurn.outsideYaw * turnStep * turnWeight;
         if (turnStep > 0.2) step.planted = false;
       }
+      if (anim.feet) {
+        // A step plan has already decided where each foot is and when it is
+        // down. Nothing from the gait may overwrite that: a planted foot is a
+        // world constraint, not a pose suggestion.
+        footL = { ...anim.feet.left };
+        footR = { ...anim.feet.right };
+      }
       liveL = footL;
       liveR = footR;
       // A heel or ball raise lifts the ankle, and the body must rise with it or
@@ -916,7 +1019,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       const stanceRise = plantedFeet.length
         ? plantedFeet.reduce((sum, foot) => sum + foot.lift, 0) / plantedFeet.length
         : 0;
-      liveHipY = g.hipY + stanceRise;
+      liveHipY = anim.feet ? anim.feet.hipY : g.hipY + stanceRise;
 
       // --- posture, blended across the movement
       const fromSpine = DRILL_SPINE[anim.from.posture] ?? DRILL_SPINE.attention;
@@ -928,10 +1031,29 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       const pelvisYaw = -g.yaw * blend + leads.pelvisYaw * turnWeight;
       const list = g.list * blend + leads.list * turnWeight;
       const eyes = anim.eyes;
-      const cervical = eyes === 'right' ? -EYES_RIGHT.cervical : eyes === 'left' ? EYES_RIGHT.cervical : 0;
+      // The directing flank (the right marker) keeps head and eyes front on an
+      // eyes-right; everyone else turns the neck, not the shoulders.
+      const headFollow = anim.code?.headFollow ?? 1;
+      // The commander orders a right dress and watches it; he is not dressing
+      // with the ranks, so his head stays front even though the squad looks right.
+      const eyesFactor =
+        anim.dressing && anim.role === 'commander' ? 0 : clamp01(anim.eyesAmount ?? 1);
+      const cervical =
+        (eyes === 'right' ? -EYES_RIGHT.cervical : eyes === 'left' ? EYES_RIGHT.cervical : 0) *
+        headFollow *
+        eyesFactor;
+      // On an eyes-right the person in command salutes. Right dress is not a
+      // salute: the commander orders the dressing and then EYES FRONT
+      // (A-DH-201-000 Ch 7), so the arm stays down while the squad looks right.
+      const saluting =
+        anim.role === 'commander' && eyes !== 'front' && !anim.dressing && !hasRifle && !hasColour;
+      const armScale = anim.code?.armSwing ?? 1;
       const lagRate = 1 - Math.exp(-Math.max(0.004, dt) * 13);
       const chestTarget = g.yaw * 1.05 * blend + leads.chestYaw * turnWeight;
-      const headTarget = cervical * 0.45 - g.yaw * 0.35 + leads.headYaw * 0.45 * turnWeight;
+      // A head does not ride the shoulders: the neck counter-rotates most of
+      // the pelvic yaw so the gaze stays level and to the front. That
+      // stabilisation is what reads as "eyes steady" on parade.
+      const headTarget = cervical * 0.45 - g.yaw * 0.5 + leads.headYaw * 0.45 * turnWeight;
       if (!lagInit) {
         chestLag = chestTarget;
         headLag = headTarget;
@@ -986,22 +1108,62 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       // --- rifle and colour, then hands on their grips
       const a = poseTargets(anim.from, hasRifle, hasColour);
       const b = poseTargets(anim.to, hasRifle, hasColour);
-      if (anim.dressing && !hasRifle && !hasColour) {
-        a.handL = DRESS_HANDS.left;
-        b.handL = DRESS_HANDS.left;
-        a.handR = DRESS_HANDS.right;
-        b.handR = DRESS_HANDS.right;
+      if (anim.dressing && !hasColour) {
+        // Right dress is counted. ONE is the check pace with the arm at the
+        // side; TWO raises the arm while the head turns; THREE is the short
+        // quick paces with the arm still up. A single linear blend had the arm
+        // already half-raised during the check pace, which is not the manual.
+        const dressT = clamp01(anim.dressT ?? 1);
+        const raise = clamp01((dressT - 0.2) / 0.18);
+        // The front rank raises an arm except the marker, who stands fast; the
+        // centre and rear ranks do not raise arms. With a rifle the right hand
+        // keeps it at the order and the free LEFT arm dresses; without arms the
+        // right arm dresses.
+        const raises = anim.code?.dressArm ?? true;
+        if (hasRifle) {
+          const target = raises
+            ? lerpV(POSTURE_HANDS.attention.left, DRESS_LEFT_RAISED, raise)
+            : POSTURE_HANDS.attention.left;
+          a.handL = target;
+          b.handL = target;
+        } else {
+          a.handL = DRESS_HANDS.left;
+          b.handL = DRESS_HANDS.left;
+          if (raises) {
+            const target = lerpV(POSTURE_HANDS.attention.right, DRESS_HANDS.right, raise);
+            a.handR = target;
+            b.handR = target;
+          }
+        }
       }
-      const weaponFrame = mixCarriage(a.weapon, b.weapon, u);
+      // EYES FRONT after a right dress cuts the arm; it is not already down at
+      // the start of the movement, which is what a snapshot-to-snapshot blend
+      // would produce.
+      if (anim.armFromDress !== undefined && !hasColour) {
+        const hold = clamp01(anim.armFromDress);
+        if (hasRifle) {
+          const target = lerpV(POSTURE_HANDS.attention.left, DRESS_LEFT_RAISED, hold);
+          a.handL = target;
+          b.handL = target;
+        } else {
+          const target = lerpV(POSTURE_HANDS.attention.right, DRESS_HANDS.right, hold);
+          a.handR = target;
+          b.handR = target;
+        }
+      }
+      let weaponFrame = mixCarriage(a.weapon, b.weapon, u);
       const colourFrame = mixCarriage(a.colour, b.colour, u);
+      // A rifle movement has numbered carriage frames, not one blend: the
+      // sampled frame is the authority for the rifle and the count targets.
+      if (anim.rifle && hasRifle) weaponFrame = anim.rifle.carriage;
       weapon.visible = !!weaponFrame && hasRifle;
       colour.visible = !!colourFrame && hasColour;
       if (weaponFrame) placeCarriage(weapon, weaponFrame);
       if (colourFrame) placeCarriage(colour, colourFrame);
       const carrier = weaponFrame ?? colourFrame;
 
-      const gripL = (handIsGripping(a, 'L') ? 1 - u : 0) + (handIsGripping(b, 'L') ? u : 0);
-      const gripR = (handIsGripping(a, 'R') ? 1 - u : 0) + (handIsGripping(b, 'R') ? u : 0);
+      let gripL = (handIsGripping(a, 'L') ? 1 - u : 0) + (handIsGripping(b, 'L') ? u : 0);
+      let gripR = (handIsGripping(a, 'R') ? 1 - u : 0) + (handIsGripping(b, 'R') ? u : 0);
 
       let handL: V3 = [
         lerp(a.handL[0], b.handL[0], u),
@@ -1013,13 +1175,33 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         lerp(a.handR[1], b.handR[1], u),
         lerp(a.handR[2], b.handR[2], u),
       ];
+      if (anim.rifle && hasRifle) {
+        handL = anim.rifle.handL;
+        handR = anim.rifle.handR;
+        gripL = anim.rifle.gripL;
+        gripR = anim.rifle.gripR;
+      }
       if (blend > 0.01) {
         // On a marching turn the manual cuts both arms to the sides through
         // the pivot; they pick the swing up again on the step-out.
-        const swing = 1 - (commanded?.armCut ?? 0) * 0.9;
-        if (gripL < 0.5) handL = swingHand(handL, g.armL * blend * swing, Math.max(4, g.elbowL));
-        if (gripR < 0.5) handR = swingHand(handR, g.armR * blend * swing, Math.max(4, g.elbowR));
+        const armCut = Math.max(commanded?.armCut ?? 0, anim.armCut ?? 0);
+        const swing = 1 - armCut * 0.9;
+        // A step plan owns the boots, so the arms must swing from where it
+        // actually put them. The free-running gait cycle can be at the opposite
+        // phase from the planned feet, which swung each arm forward with the
+        // leg on its own side: the bear march. Each arm opposes its own foot,
+        // so both sides take the same sign of that foot's forward offset.
+        const amplitude = GAIT_SPEC[anim.gait].armSwing;
+        const swingFrom = (z: number) =>
+          -amplitude * Math.max(-1, Math.min(1, z / PACE_HALF));
+        const swingL = anim.feet ? swingFrom(anim.feet.left.z) : g.armL;
+        const swingR = anim.feet ? swingFrom(anim.feet.right.z) : g.armR;
+        if (gripL < 0.5) handL = swingHand(handL, swingL * armScale * blend * swing, Math.max(4, g.elbowL));
+        if (gripR < 0.5) handR = swingHand(handR, swingR * armScale * blend * swing, Math.max(4, g.elbowR));
       }
+      // On an eyes-right the person in command salutes; the hand is placed on
+      // the brow after the swing so the marching swing cannot drag it down.
+      if (saluting) handR = POSTURE_HANDS.salute.right;
 
       const armAxisL = carrier ? new THREE.Vector3(...carrier.dir).normalize() : new THREE.Vector3(0, 1, 0);
       const armAxisR = armAxisL.clone();
@@ -1030,6 +1212,8 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         side: 1 | -1,
         grip: number,
         bar: THREE.Vector3,
+        /** Right dress: hand closed as at attention, back of the hand up. */
+        dressHand = false,
       ) => {
         // The wrist sits a palm's thickness out from the rifle, so the palm
         // touches the bar and the fingers can close around it.
@@ -1091,6 +1275,11 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         let desired: THREE.Quaternion;
         if (grip > 0.5) {
           desired = frameQuat(bar.clone().negate(), out);
+        } else if (dressHand) {
+          // Back of the hand up: the palm faces the ground and the fingers
+          // point along the raised forearm, which is a flat dressing hand
+          // rather than a relaxed one with the palm to the thigh.
+          desired = frameQuat(foreDir.clone().negate(), UP);
         } else {
           const dorsal = new THREE.Vector3(side, 0, 0).addScaledVector(foreDir, -side * foreDir.x);
           if (dorsal.lengthSq() < 1e-5) dorsal.set(0, 0, 1);
@@ -1102,13 +1291,25 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
           .multiply(arm.upper.quaternion)
           .multiply(arm.elbow.quaternion);
         arm.hand.group.quaternion.copy(parentQuat.clone().invert().multiply(desired));
+        // A dressing hand is closed as in the position of attention; only the
+        // wrist turns the back of it uppermost. A flat open hand is a different
+        // drill movement, not this one.
         const curl = grip > 0.5 ? 0.92 : 0.2;
         setHandCurl(arm.hand, curl);
         return { upperDir, foreDir, curl };
       };
 
-      const leftArm = runArm(armL, handL, 1, gripL, armAxisL);
-      const rightArm = runArm(armR, handR, -1, gripR, armAxisR);
+      // The dressing hand is flat and palm-down only while the arm is raised;
+      // at the side on ONE it is an ordinary relaxed hand.
+      const dressUp = anim.dressing
+        ? clamp01((clamp01(anim.dressT ?? 1) - 0.2) / 0.18)
+        : clamp01(anim.armFromDress ?? 0);
+      const dressArm = (anim.dressing || anim.armFromDress !== undefined) && !hasColour;
+      const dressRaised = dressArm && (anim.code?.dressArm ?? true) && dressUp > 0.15;
+      const leftDressHand = dressRaised && hasRifle;
+      const rightDressHand = dressRaised && !hasRifle;
+      const leftArm = runArm(armL, handL, 1, gripL, armAxisL, leftDressHand);
+      const rightArm = runArm(armR, handR, -1, gripR, armAxisR, rightDressHand);
       curlL = leftArm.curl;
       curlR = rightArm.curl;
 
@@ -1123,6 +1324,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
       if (mode === 'muscles') {
         body.updateMatrixWorld(true);
         for (const m of muscles) {
+          if (m.def.deep) continue;
           const pa = m.a.localToWorld(m.pa.clone());
           const pb = m.b.localToWorld(m.pb.clone());
           body.worldToLocal(pa);
@@ -1138,10 +1340,29 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
             cycle + (m.def.side === 'R' ? 0.5 : 0),
           );
           const bulge = 1 + ratio * 0.34 + m.activation * 0.14;
-          m.mesh.position.copy(pa).add(pb).multiplyScalar(0.5);
+          const radius = m.radius * bulge;
+          // Fit the belly under the skin. The anchors are palpable landmarks on
+          // the surface, so a spindle centred on their midpoint sticks out of
+          // the limb; sliding it in toward the bone axis puts it back under the
+          // skin without detaching the tendons from their bones.
+          const mid = pa.clone().add(pb).multiplyScalar(0.5);
+          muscleAxis(m.def, axisA, axisB);
+          const seg = axisB.clone().sub(axisA);
+          const span = Math.max(1e-6, seg.lengthSq());
+          const along = clamp01(mid.clone().sub(axisA).dot(seg) / span);
+          const onAxis = axisA.clone().addScaledVector(seg, along);
+          const radial = mid.clone().sub(onAxis);
+          const reach = radial.length();
+          const room = MUSCLE_ROOM[m.def.region] - 0.003;
+          if (reach > 1e-5 && reach + radius > room) {
+            radial.multiplyScalar(Math.max(0, room - radius) / reach);
+            m.mesh.position.copy(onAxis).add(radial);
+          } else {
+            m.mesh.position.copy(mid);
+          }
           const dir = pb.clone().sub(pa).normalize();
           m.mesh.quaternion.setFromUnitVectors(UP, dir);
-          m.mesh.scale.set(m.radius * bulge, Math.max(0.01, dist / 2), m.radius * bulge);
+          m.mesh.scale.set(radius, Math.max(0.01, dist / 2), radius);
         }
       }
 

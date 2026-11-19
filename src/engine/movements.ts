@@ -25,6 +25,7 @@ export interface Effect {
   headdress?: HeadDress;
   spacing?: Spacing;
   step?: 'normal' | 'out' | 'short';
+  stance?: 'attention' | 'present';
   turnDeg?: number;
   /** Required when the angle alone cannot express the side (180°). */
   turnDir?: 'right' | 'left';
@@ -205,7 +206,7 @@ const footHalt: MoveDef[] = [
     kind: 'dress',
     counts: 3,
     effect: { eyes: 'right', posture: 'attention' },
-    help: 'Right-hand person of the front rank stands fast; the remainder raise the right arm, take up alignment with short quick paces and cover off front to rear.',
+    help: 'Right-hand person of the front rank stands fast; the remainder take a half pace forward with the left foot, then the front rank raises the dressing arm (left when armed) and the squad takes up alignment with short quick paces.',
   },
   {
     type: 'eyesFront',
@@ -452,7 +453,7 @@ const footMarch: MoveDef[] = [
     reference: 'Ch 3 · Change step on the march',
     kind: 'changeStep',
     counts: 3,
-    help: 'Half pace with the left, swing the right arm forward, continue in quick time.',
+    help: 'Given as the right foot is forward: a half pace with the left, the arms cut as the right foot is brought beside the left on TWO, then the left shot forward half a pace onto the heel, and the march continues in quick time.',
   },
   {
     type: 'aboutTurnOnMarch',
@@ -463,7 +464,7 @@ const footMarch: MoveDef[] = [
     kind: 'turn',
     counts: 4,
     effect: { turnDeg: 180, turnDir: 'right' },
-    help: 'Given on the right foot: half pace left, right foot in, pivot 90° right on the ball of the right foot, then 90° on the ball of the left foot, and step off with the left.',
+    help: 'Given on the right foot: half pace with the left and the right foot brought in to attention, pivot 90° right on the right ball with the left knee bent, then 90° on the left ball with the right knee bent, and step off with the left.',
   },
   {
     type: 'rightTurnOnMarch',
@@ -472,7 +473,7 @@ const footMarch: MoveDef[] = [
     words: 'SQUAD — RIGHT — TURN',
     reference: 'Ch 3 · Turns on the march',
     kind: 'turn',
-    counts: 2,
+    counts: 3,
     effect: { turnDeg: -90 },
     help: 'Given on the left foot: half pace right, cut the arms, pivot 90° right on the ball of the right foot with the left knee up, shoot the right foot forward and continue.',
   },
@@ -483,7 +484,7 @@ const footMarch: MoveDef[] = [
     words: 'SQUAD — LEFT — TURN',
     reference: 'Ch 3 · Turns on the march',
     kind: 'turn',
-    counts: 2,
+    counts: 3,
     effect: { turnDeg: 90 },
     help: 'Given on the right foot: half pace left, cut the arms, pivot 90° left on the ball of the left foot with the right knee up, shoot the left foot forward and continue.',
   },
@@ -494,7 +495,7 @@ const footMarch: MoveDef[] = [
     words: 'SQUAD — RIGHT IN — CLINE',
     reference: 'Ch 3 · Inclines on the march',
     kind: 'turn',
-    counts: 2,
+    counts: 3,
     effect: { turnDeg: -45 },
     help: 'As a right turn on the march, but only 45°: check, pivot on the right ball, step off.',
   },
@@ -505,7 +506,7 @@ const footMarch: MoveDef[] = [
     words: 'SQUAD — LEFT IN — CLINE',
     reference: 'Ch 3 · Inclines on the march',
     kind: 'turn',
-    counts: 2,
+    counts: 3,
     effect: { turnDeg: 45 },
     help: 'As a left turn on the march, but only 45°: check, pivot on the left ball, step off.',
   },
@@ -625,9 +626,9 @@ const rifle: MoveDef[] = [
     reference: '54-04 · Present arms from the slope',
     kind: 'state',
     counts: 3,
-    effect: { weapon: 'present' },
+    effect: { weapon: 'present', stance: 'present' },
     requires: { weapon: ['slope'] },
-    help: 'Three movements bringing the rifle to the vertical in front of the body, the salute position for a formed body.',
+    help: 'Three movements bringing the rifle to the vertical in front of the body, the salute position for a formed body; on THREE the right foot goes 15 cm behind the left, toes 30° right.',
   },
   {
     type: 'slopeFromPresent',
@@ -637,9 +638,9 @@ const rifle: MoveDef[] = [
     reference: '54-04 · Slope arms from the present',
     kind: 'state',
     counts: 2,
-    effect: { weapon: 'slope' },
+    effect: { weapon: 'slope', stance: 'attention' },
     requires: { weapon: ['present'] },
-    help: 'Two movements returning the rifle to the left shoulder.',
+    help: 'Two movements returning the rifle to the left shoulder and placing the right foot beside the left.',
   },
   {
     type: 'portArms',

@@ -116,9 +116,9 @@ export const GAIT_SPEC: Record<Gait, GaitSpec> = {
     cadence: 60,
     lift: 0.06,
     lean: 1,
-    armSwing: 9,
-    elbow: 10,
-    elbowSwing: 4,
+    armSwing: 8,
+    elbow: 6,
+    elbowSwing: 2,
     sway: 0.021,
     list: 3,
     yaw: 3,
@@ -131,9 +131,15 @@ export const GAIT_SPEC: Record<Gait, GaitSpec> = {
     cadence: 120,
     lift: 0.09,
     lean: 2,
-    armSwing: 20,
-    elbow: 18,
-    elbowSwing: 10,
+    // Drill swing, not a stroll: the manual swings the arm "straight forward"
+    // from the shoulder, waist high. A straight arm at 34° puts the hand at
+    // the waist and clears the tunic; the earlier 16° arc with an 8° elbow
+    // read as a leisurely walk. Keep the elbow nearly straight as ordered.
+    armSwing: 34,
+    // 8° keeps the elbow just off lock: a genuinely straight arm makes the
+    // two-bone IK singular, which is a source of arm jitter, not realism.
+    elbow: 8,
+    elbowSwing: 3,
     sway: 0.028,
     list: 4,
     yaw: 4,
@@ -161,9 +167,11 @@ export const GAIT_SPEC: Record<Gait, GaitSpec> = {
     cadence: 120,
     lift: 0.25,
     lean: 1,
-    armSwing: 18,
-    elbow: 20,
-    elbowSwing: 8,
+    // Marking time, the arms stay at the sides and the hands are closed: the
+    // movement is in the knee, not in a swing.
+    armSwing: 0,
+    elbow: 6,
+    elbowSwing: 0,
     sway: 0.012,
     list: 2,
     yaw: 0,

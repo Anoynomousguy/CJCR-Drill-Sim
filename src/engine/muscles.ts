@@ -64,6 +64,12 @@ export interface MuscleDef {
   run?: readonly MuscleKey[];
   /** Typical peak activation in walking, % MVC. */
   peak: number;
+  /**
+   * Deep to the surface, or a thin strap that crosses other bellies: drawing
+   * it in the overlay would read as a spindle through the body, so the
+   * anatomy view leaves it out.
+   */
+  deep?: boolean;
 }
 
 const curve = (keys: readonly MuscleKey[], phase: number): number => {
@@ -219,6 +225,7 @@ interface Spec {
   peak: number;
   /** Extra phase offset; arms are half a cycle out from the leg on that side. */
   shift?: number;
+  deep?: boolean;
 }
 
 const A = (bone: MuscleBone, at: Vec3): MuscleAnchor => ({ bone, at });
@@ -244,13 +251,13 @@ const SPECS: readonly Spec[] = [
     id: 'iliopsoas', name: 'Iliopsoas', region: 'hip',
     origin: A('pelvis', [0.032, 0.962, 0.012]), insertion: A('thigh', [0.004, 0.862, 0.033]),
     radius: 0.021, action: 'flexes the hip and controls hip extension',
-    walk: ILIOPSOAS, peak: 32,
+    walk: ILIOPSOAS, peak: 32, deep: true,
   },
   {
     id: 'tfl', name: 'Tensor fasciae latae', region: 'hip',
     origin: A('pelvis', [0.086, 0.938, 0.022]), insertion: A('shin', [0.052, 0.55, 0.02]),
     radius: 0.013, action: 'tightens the iliotibial band, abducts the hip',
-    walk: GLUTE_MED, peak: 26,
+    walk: GLUTE_MED, peak: 26, deep: true,
   },
   // --------------------------------------------------------------- thigh
   {
@@ -282,7 +289,7 @@ const SPECS: readonly Spec[] = [
     id: 'semitendinosus', name: 'Semitendinosus', region: 'thigh',
     origin: A('pelvis', [0.034, 0.884, -0.066]), insertion: A('shin', [-0.02, 0.492, -0.03]),
     radius: 0.019, action: 'extends the hip and flexes the knee',
-    walk: HAMSTRINGS, run: RUN_HAMSTRINGS, peak: 30,
+    walk: HAMSTRINGS, run: RUN_HAMSTRINGS, peak: 30, deep: true,
   },
   {
     id: 'adductorLongus', name: 'Adductor longus', region: 'thigh',
@@ -294,7 +301,7 @@ const SPECS: readonly Spec[] = [
     id: 'sartorius', name: 'Sartorius', region: 'thigh',
     origin: A('pelvis', [0.078, 0.934, 0.03]), insertion: A('shin', [-0.028, 0.512, 0.05]),
     radius: 0.011, action: 'flexes, abducts and externally rotates the hip',
-    walk: RECTUS_FEMORIS, peak: 18,
+    walk: RECTUS_FEMORIS, peak: 18, deep: true,
   },
   // --------------------------------------------------------------- shank
   {
@@ -313,7 +320,7 @@ const SPECS: readonly Spec[] = [
     id: 'soleus', name: 'Soleus', region: 'shank',
     origin: A('shin', [0.006, 0.383, -0.036]), insertion: A('foot', [0.0, 0.077, -0.05]),
     radius: 0.017, action: 'holds the shank over the foot in stance',
-    walk: SOLEUS, peak: 55,
+    walk: SOLEUS, peak: 55, deep: true,
   },
   {
     id: 'peroneusLongus', name: 'Peroneus longus', region: 'shank',
@@ -410,6 +417,7 @@ function makeSide(spec: Spec, side: Side): MuscleDef {
     name: spec.name,
     side,
     region: spec.region,
+    deep: spec.deep,
     origin: flip(spec.origin),
     insertion: flip(spec.insertion),
     via: spec.via ? flip(spec.via) : undefined,

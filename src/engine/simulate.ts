@@ -9,8 +9,27 @@ import {
   STANDARD_PAUSE,
 } from './constants';
 import { buildSoldiers, initialFrame } from './dressing';
+import { gaitCycle, gaitTargets, type FootTarget } from './gait';
+import { movementCode, type MovementCode } from './individual';
 import { getMoveDef, INITIAL_SNAPSHOT } from './movements';
-import { makeTurnPlan, turnHeadingAt, type TurnPlan } from './turn';
+import {
+  CHANGE_STEP_END_SPEED,
+  makeChangeStepPlan,
+  makeDressPlan,
+  makeHaltPlan,
+  makeMarchOnPlan,
+  makeMarchPlan,
+  makePacesPlan,
+  makePresentFootPlan,
+  makeSidePlan,
+  marchTravel,
+  sampleStepPlan,
+  type StepPlan,
+} from './steps';
+import { makeMarchTurnPlan, marchTurnBodyAt } from './marchTurn';
+import { aboutTurnBodyAt, makeAboutTurnPlan } from './aboutTurn';
+import { riflePlanFor, sampleRifle, type RiflePlan, type RifleSample } from './rifle';
+import { makeTurnPlan, turnBodyAt, turnHeadingAt, type TurnBody, type TurnPlan } from './turn';
 import type { Frame, Gait, Plan, Snapshot, Soldier } from './types';
 import { clamp01, deg2rad, lerp, smoothstep } from './util';
 
@@ -46,6 +65,14 @@ export interface Segment {
   turn?: TurnPlan;
   stride0: Record<string, number>;
   scope: 'all' | 'colourParty';
+  /** Explicit footwork for movements executed at the halt. */
+  steps?: Record<string, StepPlan>;
+  /** Fraction of the action over which the body travels (the rest is a close). */
+  moveEnd?: number;
+  /** Per-count Lee-Enfield carriage plan. */
+  rifle?: RiflePlan;
+  /** This march continues the plant-to-plant phase out of a turn. */
+  leadIn?: boolean;
 }
 
 export interface Timeline {
@@ -63,6 +90,8 @@ export interface SampledSoldier {
   heading: number;
   stride: number;
   gait: Gait;
+  /** This cadet's own beat, arm swing and position-specific rules. */
+  code: MovementCode;
 }
 
 export interface Sample {
@@ -73,8 +102,18 @@ export interface Sample {
   from: Snapshot;
   to: Snapshot;
   u: number;
+  /** Linear 0..1 progress; unlike `u` it is not eased. */
+  progress: number;
   marchPhase: number;
   turn?: { plan: TurnPlan; progress: number };
+  /** Exact halt-turn body centre and boot targets, when this is a pivot. */
+  turnBody?: TurnBody;
+  /** Count-sampled rifle carriage and hand grips. */
+  rifle?: RifleSample;
+  /** Per-soldier step plans for this movement, when it has explicit footwork. */
+  steps?: Record<string, StepPlan>;
+  /** Previous movement type, so EYES FRONT can cut a held dressing arm. */
+  prevType: string;
   soldiers: SampledSoldier[];
 }
 
@@ -103,6 +142,91 @@ const canonical = (settings: Plan['settings'], roster: Plan['roster'], spacing: 
   for (const s of buildSoldiers(settings, roster, spacing)) map[s.id] = { lx: s.lx, lz: s.lz };
   return map;
 };
+
+/** The feet left by the previous movement, in the new body frame. */
+function priorFeet(
+  prev: Segment | undefined,
+  id: string,
+): { left: FootTarget; right: FootTarget } | null {
+  if (!prev) return null;
+  if (prev.turn?.march) {
+    const body = marchTurnBodyAt(prev.turn.march, 1);
+    return body ? { left: body.left, right: body.right } : null;
+  }
+  if (prev.turn?.about) {
+    const body = aboutTurnBodyAt(prev.turn.about, 1);
+    return body ? { left: body.left, right: body.right } : null;
+  }
+  const plan = prev.steps?.[id];
+  if (plan) {
+    const sample = sampleStepPlan(plan, 1);
+    return { left: sample.left, right: sample.right };
+  }
+  return null;
+}
+
+/** Rotate feet into a body frame that changed facing (the commander at a halt). */
+function rotateFeet(
+  feet: { left: FootTarget; right: FootTarget },
+  deg: number,
+): { left: FootTarget; right: FootTarget } {
+  if (Math.abs(deg) < 1e-6) return feet;
+  const a = deg2rad(deg);
+  const turn = (f: FootTarget): FootTarget => ({
+    ...f,
+    x: f.x * Math.cos(a) + f.z * Math.sin(a),
+    z: -f.x * Math.sin(a) + f.z * Math.cos(a),
+    yaw: f.yaw + deg,
+  });
+  return { left: turn(feet.left), right: turn(feet.right) };
+}
+
+/** A movement's start feet, rotated from the previous body facing into this one. */
+function priorStart(
+  prev: Segment | undefined,
+  id: string,
+  role: string,
+  fromSnapshot: Snapshot,
+  toSnapshot: Snapshot,
+  stride: number,
+  t: number,
+): { left: FootTarget; right: FootTarget } {
+  const feet =
+    priorFeet(prev, id) ??
+    gaitStartFeet(fromSnapshot, stride, t);
+  const fromRole = roleHeadingOffset(role, fromSnapshot.gait);
+  const toRole = roleHeadingOffset(role, toSnapshot.gait);
+  return rotateFeet(feet, ((fromRole - toRole) * 180) / Math.PI);
+}
+
+/** The gait's own boots at the current phase, for a march with no step plan. */
+function gaitStartFeet(
+  snapshot: Snapshot,
+  stride: number,
+  t: number,
+): { left: FootTarget; right: FootTarget } {
+  const cycle = gaitCycle(snapshot.gait, stride, t);
+  const g = gaitTargets(snapshot.gait, cycle);
+  return { left: g.left, right: g.right };
+}
+
+/** The foot the next command requires forward. */
+function commandFoot(type: string | undefined): 'L' | 'R' | null {
+  if (!type) return null;
+  if (
+    type === 'rightTurnOnMarch' ||
+    type === 'rightInclineOnMarch' ||
+    type === 'halt'
+  ) {
+    return 'L';
+  }
+  if (type === 'leftTurnOnMarch' || type === 'leftInclineOnMarch') return 'R';
+  // CHANGE STEP is given as the right foot is forward and on the ground.
+  if (type === 'changeStep') return 'R';
+  // The about turn on the march is always given as the right foot is forward.
+  if (type === 'aboutTurnOnMarch') return 'R';
+  return null;
+}
 
 function stepLength(snapshot: Snapshot): number {
   if (snapshot.step === 'out') return PACE_STEP_OUT;
@@ -213,6 +337,8 @@ export function buildTimeline(plan: Plan): Timeline {
     let turn: TurnPlan | undefined;
     let duration = def.counts * BEAT;
     let scope: Segment['scope'] = def.scope ?? 'all';
+    let marchLeadIn = false;
+    let marchDist = 0;
 
     const paces = Math.max(1, Number(params.paces ?? 1));
 
@@ -222,6 +348,7 @@ export function buildTimeline(plan: Plan): Timeline {
       case 'order': {
         if (eff.posture) toSnapshot.posture = eff.posture;
         if (eff.weapon) toSnapshot.weapon = eff.weapon;
+        if (eff.stance) toSnapshot.stance = eff.stance;
         if (eff.colour) toSnapshot.colour = eff.colour;
         if (eff.eyes) toSnapshot.eyes = eff.eyes;
         if (eff.headdress) toSnapshot.headdress = eff.headdress;
@@ -239,20 +366,63 @@ export function buildTimeline(plan: Plan): Timeline {
         // The command, not the sign of the angle, names the direction.
         turn = makeTurnPlan(context, deg, eff.turnDir ?? (deg < 0 ? 'right' : 'left'));
         toFrame.heading = frame.heading + turn.angle;
-        if (context === 'halt') {
-          // Each person turns on the spot. The frame's local coordinates are
-          // counter-rotated so the new facing describes the same world slots;
-          // without this the whole parade orbits the frame origin.
+        if (context === 'halt' || context === 'march' || context === 'aboutMarch') {
+          // Each person turns on the spot about a fixed boot contact. The
+          // pivot itself shifts the body a few centimetres; the new local slot
+          // is the old slot plus that offset, counter-rotated into the new
+          // facing, or the whole parade would orbit the frame origin.
+          let endBody: TurnBody | null = null;
+          if (context === 'halt') {
+            endBody = turnBodyAt(turn, 1);
+          } else {
+            const first = soldiers[0];
+            const startFeet = priorStart(
+              segments[segments.length - 1],
+              first?.id ?? '',
+              first?.role ?? 'cadet',
+              fromSnapshot,
+              toSnapshot,
+              stride0[first?.id ?? ''] ?? 0,
+              t,
+            );
+            if (context === 'march') {
+              // Carry the speed of the march that is handing over into the
+              // turn, so the pelvis decelerates through the half pace instead
+              // of stopping on the command and lurching off again.
+              const entrySpeed =
+                (stepLength(fromSnapshot) * cadenceOf(fromSnapshot.gait, settings.cadence)) / 60;
+              turn.march = makeMarchTurnPlan(turn, startFeet, entrySpeed) ?? undefined;
+              if (turn.march) {
+                endBody = marchTurnBodyAt(turn.march, 1);
+                duration = 3 * BEAT;
+              }
+            } else {
+              // About turn: five beats, two fixed ball contacts, both boots
+              // coming together at attention between the pivots.
+              turn.about = makeAboutTurnPlan(turn, startFeet) ?? undefined;
+              if (turn.about) {
+                endBody = aboutTurnBodyAt(turn.about, 1);
+                duration = 5 * BEAT;
+              }
+            }
+          }
           const cos = Math.cos(turn.angle);
           const sin = Math.sin(turn.angle);
           const rotated: LocalMap = {};
           for (const s of soldiers) {
             const l = fromLocal[s.id] ?? { lx: s.lx, lz: s.lz };
-            rotated[s.id] = { lx: l.lx * cos - l.lz * sin, lz: l.lx * sin + l.lz * cos };
+            const roleOff = roleHeadingOffset(s.role, toSnapshot.gait);
+            const bx = endBody ? Math.cos(roleOff) * endBody.x + Math.sin(roleOff) * endBody.z : 0;
+            const bz = endBody ? -Math.sin(roleOff) * endBody.x + Math.cos(roleOff) * endBody.z : 0;
+            const ox = l.lx + bx;
+            const oz = l.lz + bz;
+            rotated[s.id] = { lx: ox * cos - oz * sin, lz: ox * sin + oz * cos };
           }
           toLocal = rotated;
         }
-        duration = Math.max(def.counts * BEAT, context === 'halt' ? 0.9 : 1.4);
+        if (!turn.march && !turn.about) {
+          duration = Math.max(def.counts * BEAT, context === 'halt' ? 0.9 : 1.4);
+        }
         mode = 'turn';
         break;
       }
@@ -287,7 +457,26 @@ export function buildTimeline(plan: Plan): Timeline {
         const cadence = cadenceOf(toSnapshot.gait, settings.cadence);
         duration = (paces * 60) / cadence;
         const f = forwardOf(frame.heading);
-        const dist = paces * len;
+        // From the halt the first step is a half pace, so the march covers
+        // half a pace less than the same march at speed. The step plan spreads
+        // its plants over this distance; the old, nominal one made the body
+        // sprint the final half beat to catch the last boot.
+        const dist = marchTravel(paces, len, fromSnapshot.gait === 'halt');
+        marchDist = dist;
+        // A turn ends on a footfall. The next march must plant its first boot a
+        // full beat later, not half a beat, or the squad takes a quick little
+        // step out of every turn. Once in this phase the following marches
+        // keep it: each one ends on a plant.
+        const prevSeg = segments[segments.length - 1];
+        marchLeadIn =
+          fromSnapshot.gait !== 'halt' &&
+          scope !== 'colourParty' &&
+          Boolean(
+            prevSeg?.turn?.march ||
+              prevSeg?.turn?.about ||
+              prevSeg?.leadIn ||
+              prevSeg?.type === 'changeStep',
+          );
         if (scope === 'colourParty') {
           for (const s of soldiers) {
             if (s.role === 'colourOfficer' || s.role === 'colourEscort') {
@@ -306,6 +495,17 @@ export function buildTimeline(plan: Plan): Timeline {
         toSnapshot.gait = 'halt';
         toSnapshot.posture = 'attention';
         duration = 2 * BEAT;
+        // The command is given on the left foot: the right foot checks the
+        // movement with one more pace, the left takes a half pace, and the
+        // right knee closes to attention. The net travel of the body is the
+        // half pace, not a full pace. A halt from the halt simply comes to
+        // attention.
+        if (fromSnapshot.gait !== 'halt') {
+          const f = forwardOf(frame.heading);
+          toFrame.x += f.x * PACE_HALF;
+          toFrame.z += f.z * PACE_HALF;
+          mode = 'linear';
+        }
         break;
       }
       case 'markTime': {
@@ -314,7 +514,25 @@ export function buildTimeline(plan: Plan): Timeline {
         break;
       }
       case 'changeStep': {
-        duration = 3 * BEAT;
+        // A movement on the march: a half pace with the left, the right foot
+        // closed beside it with the arms cut, then the left shot forward onto
+        // the heel. The boots check the ground speed for the middle beat, so
+        // the body covers two half paces rather than three marching paces.
+        if (fromSnapshot.gait !== 'quick') {
+          warnings.push({
+            moveIndex: index,
+            moveId: instance.id,
+            severity: 'info',
+            message: `${def.title}: the quick-time change step is modelled; the squad is ${fromSnapshot.gait === 'halt' ? 'halted' : `in ${fromSnapshot.gait} time`}.`,
+          });
+        }
+        // The command falls on the right footfall and the first count is half
+        // a beat later, so three boots land at +0.5, +1.5 and +2.5 beats. The
+        // action ends on the third landing; the next march plants one beat
+        // after it, keeping the fast cadence right through the seam. The frame
+        // travel is taken from the plan once the boots are known.
+        duration = 2.5 * BEAT;
+        mode = 'linear';
         break;
       }
       case 'dress': {
@@ -364,13 +582,21 @@ export function buildTimeline(plan: Plan): Timeline {
           // dressing, so a following RIGHT DRESS visibly aligns the ranks.
           const homes = canonical(settings, plan.roster, snapshot.spacing);
           for (const s of soldiers) {
+            // The right marker is the directing flank and the reference for the
+            // following dress: he must fall in exactly on his slot, not jittered.
+            if (s.role === 'marker') continue;
             const home = homes[s.id] ?? { lx: s.lx, lz: s.lz };
             const j = jitterOf(s.id);
             homes[s.id] = { lx: home.lx + j[0] * 0.16, lz: home.lz + j[1] * 0.1 };
           }
           toLocal = homes;
           toSnapshot.posture = 'attention';
-          duration = def.counts * BEAT;
+          // The squad marches on in quick time; eight 75 cm paces over 6 m,
+          // with the half-beat step-off and the final close. The movement ends
+          // with the squad halted in its ranks, not still marching: the arms
+          // are at the sides and the next command is given at the halt.
+          toSnapshot.gait = 'halt';
+          duration = 9 * BEAT;
         } else {
           const off: LocalMap = {};
           for (const s of soldiers) {
@@ -394,16 +620,222 @@ export function buildTimeline(plan: Plan): Timeline {
         break;
     }
 
+    // --- count-sampled rifle carriages -------------------------------------
+    // A rifle movement is three (or two) numbered movements separated by the
+    // standard pause, not one blend. The plan supplies the count frames, the
+    // hand grips and the manual's footwork.
+    const rifle = def.discipline === 'rifle' ? riflePlanFor(instance.type, fromSnapshot.weapon) : null;
+    if (rifle) duration = rifle.duration;
+
+    // --- explicit footwork -------------------------------------------------
+    // Movements at the halt are not a slide from A to B. Each foot is given a
+    // plant, a lift and a landing; the body is free to travel across the plants
+    // and the pelvis height is solved from the stance leg.
+    let steps: Record<string, StepPlan> | undefined;
+    let moveEnd: number | undefined;
+    const needsPlan =
+      def.kind === 'pace' ||
+      def.kind === 'march' ||
+      def.kind === 'order' ||
+      def.kind === 'halt' ||
+      def.kind === 'dress' ||
+      def.kind === 'changeStep' ||
+      (def.kind === 'fall' && instance.type === 'fallIn');
+    if (needsPlan) {
+      const map: Record<string, StepPlan> = {};
+      const nextType = plan.programme[index + 1]?.type;
+      for (const s of soldiers) {
+        const a = fromLocal[s.id] ?? { lx: s.lx, lz: s.lz };
+        const b = toLocal[s.id] ?? { lx: s.lx, lz: s.lz };
+        const heading = fromFrame.heading + roleHeadingOffset(s.role, toSnapshot.gait);
+        const sin = Math.sin(heading);
+        const cos = Math.cos(heading);
+        // Paces and the halt move the frame; open/close, dress and fall-in
+        // move each person's slot within it.
+        const useFrame = def.kind === 'pace' || def.kind === 'march' || def.kind === 'halt';
+        const dx = useFrame ? toFrame.x - fromFrame.x : b.lx - a.lx;
+        const dz = useFrame ? toFrame.z - fromFrame.z : b.lz - a.lz;
+        // formation displacement -> this soldier's body frame (x left, z forward)
+        const total = { x: -(dx * cos - dz * sin), z: dx * sin + dz * cos };
+        let plan: StepPlan | null = null;
+        if (def.kind === 'pace') {
+          // A pace from the halt has an explicit step-off. Once the squad is
+          // already marching the gait carries the feet; forcing a halted step
+          // plan onto a moving squad snaps both boots back to attention.
+          if (fromSnapshot.gait === 'halt') {
+            plan =
+              Math.abs(total.x) > Math.abs(total.z)
+                ? makeSidePlan({ paces, total })
+                : makePacesPlan({ paces, total });
+          }
+        } else if (def.kind === 'order') {
+          plan = makePacesPlan({
+            paces: 3,
+            total,
+            kind: def.type === 'openOrder' ? 'open' : 'close',
+            labels: ['one', 'two', 'three', 'close'],
+          });
+        } else if (def.kind === 'halt') {
+          if (fromSnapshot.gait !== 'halt') {
+            const start = priorStart(
+              segments[segments.length - 1],
+              s.id,
+              s.role,
+              fromSnapshot,
+              toSnapshot,
+              stride0[s.id] ?? 0,
+              t,
+            );
+            plan = makeHaltPlan({
+              total,
+              startLeft: start.left,
+              startRight: start.right,
+            });
+          }
+        } else if (def.kind === 'march') {
+          // Continue from the exact boots the last movement left, and finish on
+          // the foot the next command names, so no seam snaps a planted foot.
+          const start = priorStart(
+            segments[segments.length - 1],
+            s.id,
+            s.role,
+            fromSnapshot,
+            toSnapshot,
+            stride0[s.id] ?? 0,
+            t,
+          );
+          const lead = start.left.z <= start.right.z ? 'L' : 'R';
+          plan = makeMarchPlan({
+            start,
+            paces,
+            lead,
+            distance: total.z,
+            endFoot: commandFoot(nextType),
+            // Into a turn or a halt the trail boot must already be swinging,
+            // or the next movement starts from a crouch: a boot held flat a
+            // whole pace behind the pelvis forces the hip down to 0.59 m and
+            // folds the other knee to 105°. The halt's own first pace is the
+            // rest of this swing.
+            trailSwing: true,
+            // From the halt the body accelerates through the first half
+            // pace; a march handing over from a turn is already at speed,
+            // while a change step hands over still checked by its half paces.
+            fromHalt: fromSnapshot.gait === 'halt',
+            leadIn: marchLeadIn,
+            leadInSpeed:
+              segments[segments.length - 1]?.type === 'changeStep'
+                ? CHANGE_STEP_END_SPEED
+                : undefined,
+            // A turn given on the march flattens the free boot at the
+            // command; lay it flat on the last frame instead of snapping it
+            // down there. A halt or another march keeps the raised heel.
+            flatEnd: nextType ? getMoveDef(nextType).kind === 'turn' : false,
+          });
+        } else if (def.kind === 'changeStep') {
+          // The command is given on the right foot, so the half pace, the
+          // close and the shot are anchored to the boots this march inherits.
+          const start = priorStart(
+            segments[segments.length - 1],
+            s.id,
+            s.role,
+            fromSnapshot,
+            toSnapshot,
+            stride0[s.id] ?? 0,
+            t,
+          );
+          plan = makeChangeStepPlan({ startLeft: start.left, startRight: start.right });
+        } else if (def.kind === 'dress') {
+          plan = makeDressPlan({
+            total,
+            marker: s.role === 'marker',
+            commander: s.role === 'commander',
+          });
+        } else {
+          plan = makeMarchOnPlan({ total });
+        }
+        if (plan) {
+          map[s.id] = plan;
+          moveEnd = plan.moveEnd;
+        }
+      }
+      if (Object.keys(map).length) steps = map;
+    }
+
+    if (rifle?.foot && settings.armed) {
+      const fromStance = fromSnapshot.stance ?? 'attention';
+      const toStance = toSnapshot.stance ?? 'attention';
+      const last = rifle.steps[rifle.steps.length - 1];
+      const map: Record<string, StepPlan> = {};
+      for (const s of soldiers) {
+        if (!s.rifle) continue;
+        const plan = makePresentFootPlan({
+          from: fromStance,
+          to: toStance,
+          swingStart: last.start / rifle.duration,
+          land: last.end / rifle.duration,
+        });
+        if (plan) map[s.id] = plan;
+      }
+      if (Object.keys(map).length) {
+        steps = map;
+        moveEnd = 1;
+      }
+    }
+
+    if (def.kind === 'changeStep' && steps) {
+      const plan = Object.values(steps)[0];
+      if (plan) {
+        // The plants are anchored to the inherited boots, which can differ by
+        // a few centimetres from the nominal two half paces. Move the
+        // formation by exactly what the boots did.
+        const f = forwardOf(frame.heading);
+        toFrame.x += f.x * plan.total.z;
+        toFrame.z += f.z * plan.total.z;
+        if (plan.start.right.z < plan.start.left.z - 0.02) {
+          warnings.push({
+            moveIndex: index,
+            moveId: instance.id,
+            severity: 'warn',
+            message: `${def.title}: the command is given as the right foot is forward, but the squad handed over on the left foot.`,
+          });
+        }
+      }
+    }
+
+    if (marchLeadIn && steps) {
+      const leadPlan = Object.values(steps).find((p) => p.kind === 'march');
+      if (leadPlan) {
+        // The lead-in's first step closes the offset the turn left the body
+        // with, and an extra pace may be added so the march finishes on the
+        // next command's foot. Both change the ground the formation gains.
+        const delta = leadPlan.total.z - marchDist;
+        const f = forwardOf(frame.heading);
+        toFrame.x += f.x * delta;
+        toFrame.z += f.z * delta;
+        duration = leadPlan.paces * BEAT;
+      }
+    }
+
     const actionEnd = t + duration;
-    const end = actionEnd + STANDARD_PAUSE;
+    // The standard pause belongs to movements that leave the squad standing.
+    // A squad still marching at the end of a command does not stop for it: the
+    // stride, and therefore the arm swing, must run straight into the next
+    // movement or the arms freeze for a second between marching movements.
+    const end = actionEnd + (toSnapshot.gait === 'halt' ? STANDARD_PAUSE : 0);
 
     for (const s of soldiers) {
       let travelled = 0;
       if (mode === 'turn' && turn) {
         if (turn.context !== 'halt') {
           const l = fromLocal[s.id] ?? { lx: s.lx, lz: s.lz };
-          const w = worldOf(fromFrame, l.lx, l.lz);
-          travelled = Math.abs(turn.angle) * Math.hypot(w.x - fromFrame.x, w.z - fromFrame.z);
+          if (turn.march) {
+            travelled = turn.march.advance;
+          } else if (turn.about) {
+            travelled = turn.about.advance;
+          } else {
+            const w = worldOf(fromFrame, l.lx, l.lz);
+            travelled = Math.abs(turn.angle) * Math.hypot(w.x - fromFrame.x, w.z - fromFrame.z);
+          }
         }
       } else if (mode === 'arc' && pivot && angle !== undefined) {
         const l = fromLocal[s.id] ?? { lx: s.lx, lz: s.lz };
@@ -436,6 +868,10 @@ export function buildTimeline(plan: Plan): Timeline {
       turn,
       stride0,
       scope,
+      steps,
+      moveEnd,
+      rifle: rifle ?? undefined,
+      leadIn: marchLeadIn || undefined,
     });
 
     t = end;
@@ -526,6 +962,9 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
   const span = Math.max(0.0001, seg.actionEnd - seg.start);
   const raw = clamp01((t - seg.start) / span);
   const u = smoothstep(raw);
+  // The body finishes its travel before the close of a paces/order movement.
+  // Feet and frame must use the same progress or a planted foot would slide.
+  const motion = clamp01(raw / (seg.moveEnd ?? 1));
 
   const turnProgress = seg.turn ? turnHeadingAt(seg.turn, raw) : 0;
   const bodyHeading = seg.turn
@@ -537,7 +976,7 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
     // Halt turns keep every person's feet in the same world slot and only
     // change the facing. Marching turns wheel the formation about its centre.
     frame =
-      seg.turn.context === 'halt'
+      seg.turn.context === 'halt' || seg.turn.march || seg.turn.about
         ? seg.fromFrame
         : { x: seg.fromFrame.x, z: seg.fromFrame.z, heading: bodyHeading };
   } else if (seg.mode === 'arc' && seg.pivot && seg.angle !== undefined) {
@@ -545,28 +984,75 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
     const p = rotateAbout({ x: seg.fromFrame.x, z: seg.fromFrame.z }, seg.pivot, a);
     frame = { x: p.x, z: p.z, heading: seg.fromFrame.heading + seg.angle * raw };
   } else if (seg.mode === 'linear') {
+    // A march from the halt has a step-off: its step plan owns the body path,
+    // so the frame uses the same progress as the planted feet instead of raw
+    // time. Other linear movements keep their existing motion.
+    const stepPlan = Object.values(seg.steps ?? {}).find(
+      (p) => (p.kind === 'march' || p.kind === 'changeStep') && p.bodyAt,
+    );
+    const stepBody = stepPlan?.bodyAt?.(raw);
+    const frameProgress =
+      stepPlan && stepPlan.total.z !== 0 && stepBody
+        ? stepBody.z / stepPlan.total.z
+        : motion;
     frame = {
-      x: lerp(seg.fromFrame.x, seg.toFrame.x, raw),
-      z: lerp(seg.fromFrame.z, seg.toFrame.z, raw),
-      heading: seg.fromFrame.heading + angleDelta(seg.fromFrame.heading, seg.toFrame.heading) * raw,
+      x: lerp(seg.fromFrame.x, seg.toFrame.x, frameProgress),
+      z: lerp(seg.fromFrame.z, seg.toFrame.z, frameProgress),
+      heading:
+        seg.fromFrame.heading +
+        angleDelta(seg.fromFrame.heading, seg.toFrame.heading) * frameProgress,
     };
   }
 
+  const turnBody = seg.turn
+    ? seg.turn.march
+      ? marchTurnBodyAt(seg.turn.march, raw)
+      : seg.turn.about
+        ? aboutTurnBodyAt(seg.turn.about, raw)
+        : turnBodyAt(seg.turn, raw)
+    : null;
+  const rifle = seg.rifle
+    ? sampleRifle(seg.rifle, raw * (seg.actionEnd - seg.start), seg.fromSnapshot.posture)
+    : undefined;
   const soldiers: SampledSoldier[] = timeline.soldiers.map((s) => {
     const a = seg.fromLocal[s.id] ?? { lx: s.lx, lz: s.lz };
     const b = seg.toLocal[s.id] ?? { lx: s.lx, lz: s.lz };
-    const fixed = seg.mode === 'turn' && seg.turn?.context === 'halt';
-    const lx = fixed ? a.lx : lerp(a.lx, b.lx, raw);
-    const lz = fixed ? a.lz : lerp(a.lz, b.lz, raw);
+    const fixed =
+      seg.mode === 'turn' &&
+      (seg.turn?.context === 'halt' || Boolean(seg.turn?.march) || Boolean(seg.turn?.about));
+    const roleOff = roleHeadingOffset(s.role, seg.toSnapshot.gait);
+    // The pivot body offset is in the person's own facing; express it in the
+    // formation frame before applying it to the slot.
+    const bodyX = turnBody ? Math.cos(roleOff) * turnBody.x + Math.sin(roleOff) * turnBody.z : 0;
+    const bodyZ = turnBody ? -Math.sin(roleOff) * turnBody.x + Math.cos(roleOff) * turnBody.z : 0;
+    const stepPlan = seg.steps?.[s.id];
+    const stepBody =
+      stepPlan?.kind === 'dress' && stepPlan.bodyAt ? stepPlan.bodyAt(raw) : null;
+    let lx: number;
+    let lz: number;
+    if (stepBody) {
+      // The dress body path is in the soldier's own frame; express it in the
+      // formation frame before adding it to the starting slot.
+      const h = bodyHeading + roleHeadingOffset(s.role, seg.toSnapshot.gait);
+      const cosH = Math.cos(h);
+      const sinH = Math.sin(h);
+      lx = a.lx - cosH * stepBody.x + sinH * stepBody.z;
+      lz = a.lz + sinH * stepBody.x + cosH * stepBody.z;
+    } else {
+      lx = fixed ? a.lx + bodyX : lerp(a.lx, b.lx, motion);
+      lz = fixed ? a.lz + bodyZ : lerp(a.lz, b.lz, motion);
+    }
     const w = worldOf(frame, lx, lz);
     const isColourParty = s.role === 'colourOfficer' || s.role === 'colourEscort' || s.role === 'wo';
     const gait: Gait =
       seg.scope === 'colourParty' && !isColourParty ? seg.fromSnapshot.gait : seg.toSnapshot.gait;
     const travelled =
       seg.mode === 'turn' && seg.turn
-        ? seg.turn.context === 'halt'
-          ? 0
-          : Math.abs(seg.turn.angle * turnProgress) * Math.hypot(w.x - seg.fromFrame.x, w.z - seg.fromFrame.z)
+        ? seg.turn.march || seg.turn.about
+          ? Math.hypot(turnBody?.x ?? 0, turnBody?.z ?? 0)
+          : seg.turn.context === 'halt'
+            ? 0
+            : Math.abs(seg.turn.angle * turnProgress) * Math.hypot(w.x - seg.fromFrame.x, w.z - seg.fromFrame.z)
         : seg.mode === 'arc' && seg.pivot && seg.angle !== undefined
         ? Math.abs(seg.angle * raw) * Math.hypot(w.x - seg.pivot.x, w.z - seg.pivot.z)
         : seg.mode === 'linear'
@@ -579,6 +1065,7 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
       heading: bodyHeading + roleHeadingOffset(s.role, seg.toSnapshot.gait),
       stride: (seg.stride0[s.id] ?? 0) + travelled,
       gait,
+      code: movementCode(s),
     };
   });
 
@@ -590,8 +1077,13 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
     from: seg.fromSnapshot,
     to: seg.toSnapshot,
     u,
+    progress: raw,
     marchPhase: 0,
     turn: seg.turn ? { plan: seg.turn, progress: raw } : undefined,
+    turnBody: turnBody ?? undefined,
+    rifle,
+    steps: seg.steps,
+    prevType: seg.index > 0 ? timeline.segments[seg.index - 1].type : '',
     soldiers,
   };
 }

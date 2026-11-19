@@ -72,7 +72,9 @@ describe('rifle carriage', () => {
     expect(muzzle[2]).toBeLessThan(-0.1);
 
     const t = poseTargets(snap({ weapon: 'slope' }), true, false);
-    expect(t.handL).toEqual(carriagePoint(c, RIFLE.grip.small));
+    // The left hand holds the butt plate with the fingers round it, not the
+    // small of the butt: that is where the slope grips. The right hand is free.
+    expect(t.handL).toEqual(carriagePoint(c, 0.02));
     expect(t.handR).toEqual(POSTURE_HANDS.attention.right);
     expect(handIsGripping(t, 'L')).toBe(true);
     expect(handIsGripping(t, 'R')).toBe(false);

@@ -107,18 +107,25 @@ export const POSTURE_HANDS: Record<Posture, { left: Vec3; right: Vec3; torso?: R
   salute: { left: [0.225, -0.25, 0.02], right: [-0.07, 0.5, 0.1] },
 };
 
-/** RIGHT DRESS: arm horizontal at shoulder height, palm down. */
+/** RIGHT DRESS: arm horizontal at shoulder height, hand closed, back up. */
 export const DRESS_HANDS: { left: Vec3; right: Vec3 } = {
   left: [0.225, -0.25, 0.02],
   right: [-0.68, 0.26, 0.03],
 };
+
+/**
+ * Dressing while bearing arms: the right hand keeps the rifle at the order and
+ * the LEFT arm is raised (A-DH-201-000 Ch 2: "when bearing arms, dressing is
+ * completed by raising the left arm rather than the right arm").
+ */
+export const DRESS_LEFT_RAISED: Vec3 = [0.68, 0.26, 0.03];
 
 // ===================================================================== rifle
 export const RIFLE = {
   /** Lee-Enfield No. 1 Mk III: 1.13 m overall. */
   length: 1.13,
   /** Distance from the butt to each grip. */
-  grip: { small: 0.12, balance: 0.52, order: 0.915 },
+  grip: { small: 0.12, balance: 0.52, order: 0.915, muzzle: 1.11 },
 } as const;
 
 /**
@@ -154,11 +161,12 @@ const RIFLE_ORDER: Carriage = {
 
 const RIFLE_SLOPE: Carriage = {
   // Butt at the left hip, barrel through the hollow of the left shoulder at
-  // 1.40 m, muzzle up and 25 cm behind the shoulder. Left hand at the small.
+  // 1.40 m, muzzle up and 25 cm behind the shoulder. The manual's slope is
+  // held by the LEFT hand around the butt plate, the right arm cut away.
   butt: [0.17, -0.2, 0.1],
   dir: [0.02, 0.95, -0.31],
   roll: 12,
-  hands: { left: RIFLE.grip.small },
+  hands: { left: 0.02 },
 };
 
 const RIFLE_PRESENT: Carriage = {

@@ -17,6 +17,7 @@
 // lives in before a movement rotates it.
 
 import * as THREE from 'three';
+import { useDualQuaternionSkinning } from './dualQuat';
 
 export type SkinBoneName =
   | 'pelvis'
@@ -139,9 +140,11 @@ function trunkStations(): SkinStation[] {
     { y: 0.958, rx: 0.156, rz: 0.111, z: -0.001, power: 2.2, weights: W({ pelvis: 0.85, spine: 0.15 }) },
     { y: 1.0, rx: 0.148, rz: 0.105, z: 0.002, power: 2.2, weights: W({ pelvis: 0.45, spine: 0.55 }) },
     { y: 1.042, rx: 0.141, rz: 0.1, z: 0.005, power: 2.2, weights: W({ spine: 1 }) },
-    { y: 1.088, rx: 0.139, rz: 0.099, z: 0.006, power: 2.2, weights: W({ spine: 0.8, chest: 0.2 }) },
-    { y: 1.136, rx: 0.146, rz: 0.104, z: 0.005, power: 2.2, weights: W({ spine: 0.35, chest: 0.65 }) },
-    { y: 1.186, rx: 0.156, rz: 0.111, z: 0.004, power: 2.3, weights: W({ chest: 1 }) },
+    { y: 1.082, rx: 0.139, rz: 0.099, z: 0.006, power: 2.2, weights: W({ spine: 0.86, chest: 0.14 }) },
+    { y: 1.112, rx: 0.143, rz: 0.102, z: 0.005, power: 2.2, weights: W({ spine: 0.64, chest: 0.36 }) },
+    { y: 1.142, rx: 0.148, rz: 0.105, z: 0.005, power: 2.2, weights: W({ spine: 0.4, chest: 0.6 }) },
+    { y: 1.168, rx: 0.154, rz: 0.109, z: 0.004, power: 2.3, weights: W({ spine: 0.18, chest: 0.82 }) },
+    { y: 1.196, rx: 0.159, rz: 0.112, z: 0.004, power: 2.3, weights: W({ chest: 1 }) },
     { y: 1.236, rx: 0.164, rz: 0.115, z: 0.003, power: 2.4, weights: W({ chest: 1 }) },
     { y: 1.286, rx: 0.17, rz: 0.114, z: 0.002, power: 2.4, weights: W({ chest: 1 }) },
     { y: 1.336, rx: 0.175, rz: 0.11, z: 0, power: 2.4, weights: W({ chest: 1 }) },
@@ -182,17 +185,28 @@ function armStations(side: 1 | -1): SkinStation[] {
     { y: 0.952, x, rx: 0.033, rz: 0.034, weights: W({ foreArm: 1 }) },
     { y: 0.996, x, rx: 0.039, rz: 0.039, weights: W({ foreArm: 1 }) },
     { y: 1.04, x, rx: 0.043, rz: 0.042, weights: W({ foreArm: 1 }) },
-    { y: 1.083, x, rx: 0.045, rz: 0.043, weights: W({ foreArm: 1 }) },
-    { y: 1.113, x, rx: 0.043, rz: 0.042, weights: wFore(0.15) },
-    { y: 1.14, x, rx: 0.042, rz: 0.042, weights: wFore(0.5) },
-    { y: 1.167, x, rx: 0.043, rz: 0.044, weights: wFore(0.85) },
-    { y: 1.205, x, rx: 0.046, rz: 0.047, z: 0.002, weights: W({ upperArm: 1 }) },
-    { y: 1.255, x, rx: 0.049, rz: 0.05, z: 0.003, weights: W({ upperArm: 1 }) },
-    { y: 1.305, x, rx: 0.05, rz: 0.051, z: 0.002, weights: W({ upperArm: 1 }) },
-    { y: 1.355, x, rx: 0.05, rz: 0.051, z: 0.001, weights: W({ upperArm: 1 }) },
-    { y: 1.395, x: side * 0.196, rx: 0.052, rz: 0.054, weights: W({ upperArm: 0.85, chest: 0.15 }) },
-    { y: 1.418, x: side * 0.188, rx: 0.053, rz: 0.055, weights: wUpper(0.7) },
-    { y: 1.436, x: side * 0.172, rx: 0.046, rz: 0.049, weights: wUpper(0.35) },
+    { y: 1.078, x, rx: 0.045, rz: 0.043, weights: W({ foreArm: 1 }) },
+    // The elbow carries a little extra width over the condyles; without it the
+    // sleeve pinches to a waist at full flexion.
+    { y: 1.104, x, rx: 0.047, rz: 0.046, weights: wFore(0.12) },
+    { y: 1.126, x, rx: 0.047, rz: 0.046, weights: wFore(0.34) },
+    { y: 1.148, x, rx: 0.047, rz: 0.046, weights: wFore(0.5) },
+    { y: 1.17, x, rx: 0.047, rz: 0.046, weights: wFore(0.72) },
+    { y: 1.192, x, rx: 0.047, rz: 0.047, weights: wFore(0.92) },
+    { y: 1.214, x, rx: 0.049, rz: 0.049, z: 0.002, weights: W({ upperArm: 1 }) },
+    { y: 1.258, x, rx: 0.049, rz: 0.05, z: 0.003, weights: W({ upperArm: 1 }) },
+    { y: 1.302, x, rx: 0.05, rz: 0.051, z: 0.002, weights: W({ upperArm: 1 }) },
+    { y: 1.346, x, rx: 0.053, rz: 0.054, z: 0.001, weights: W({ upperArm: 1 }) },
+    // The deltoid is a mass, not a tube end. It stays with the arm as the arm
+    // elevates, so the sleeve turns over the joint instead of being left behind
+    // as a wedge of cloth; the clavicle takes a share at the top so the girdle
+    // still carries the shoulder.
+    { y: 1.374, x: side * 0.199, rx: 0.057, rz: 0.058, weights: W({ upperArm: 0.95, clav: 0.05 }) },
+    { y: 1.396, x: side * 0.194, rx: 0.06, rz: 0.061, weights: W({ upperArm: 0.85, clav: 0.15 }) },
+    { y: 1.416, x: side * 0.184, rx: 0.058, rz: 0.059, weights: W({ upperArm: 0.7, clav: 0.3 }) },
+    { y: 1.431, x: side * 0.17, rx: 0.05, rz: 0.052, weights: W({ upperArm: 0.55, clav: 0.45 }) },
+    { y: 1.442, x: side * 0.158, rx: 0.038, rz: 0.04, weights: W({ upperArm: 0.4, clav: 0.6 }) },
+    { y: 1.45, x: side * 0.15, rx: 0.019, rz: 0.021, weights: W({ upperArm: 0.3, clav: 0.7 }) },
   ];
 }
 
@@ -215,18 +229,27 @@ function legStations(side: 1 | -1): SkinStation[] {
     { y: 0.327, x, rx: 0.06, rz: 0.062, z: -0.004, weights: W({ shin: 1 }) },
     { y: 0.378, x, rx: 0.064, rz: 0.068, z: -0.006, weights: W({ shin: 1 }) },
     { y: 0.418, x, rx: 0.058, rz: 0.062, z: -0.002, weights: W({ shin: 1 }) },
-    { y: 0.452, x, rx: 0.056, rz: 0.059, weights: wShin(0.85) },
-    { y: 0.48, x, rx: 0.056, rz: 0.059, weights: wShin(0.5) },
-    { y: 0.507, x, rx: 0.058, rz: 0.061, weights: wShin(0.15) },
-    { y: 0.55, x, rx: 0.062, rz: 0.065, weights: W({ thigh: 1 }) },
+    // Trousers over the knee: a little wider over the patella, and the weights
+    // handed over across four rings so a 120-degree bend folds instead of
+    // creasing to a point.
+    { y: 0.444, x, rx: 0.057, rz: 0.06, weights: wShin(0.92) },
+    { y: 0.466, x, rx: 0.058, rz: 0.062, z: 0.002, weights: wShin(0.72) },
+    { y: 0.49, x, rx: 0.061, rz: 0.064, z: 0.003, weights: wShin(0.5) },
+    { y: 0.514, x, rx: 0.06, rz: 0.063, z: 0.002, weights: wShin(0.28) },
+    { y: 0.538, x, rx: 0.059, rz: 0.062, weights: wShin(0.08) },
+    { y: 0.57, x, rx: 0.063, rz: 0.066, weights: W({ thigh: 1 }) },
     { y: 0.62, x, rx: 0.069, rz: 0.072, weights: W({ thigh: 1 }) },
     { y: 0.7, x, rx: 0.077, rz: 0.079, z: 0.003, weights: W({ thigh: 1 }) },
     { y: 0.78, x, rx: 0.084, rz: 0.085, z: 0.004, weights: W({ thigh: 1 }) },
     { y: 0.85, x, rx: 0.089, rz: 0.09, z: 0.002, weights: W({ thigh: 1 }) },
-    { y: 0.9, x, rx: 0.092, rz: 0.093, weights: wThigh(0.85) },
-    { y: 0.93, x, rx: 0.094, rz: 0.096, weights: wThigh(0.6) },
-    { y: 0.965, x: side * 0.093, rx: 0.092, rz: 0.095, weights: wThigh(0.35) },
-    { y: 1.0, x: side * 0.09, rx: 0.088, rz: 0.092, weights: W({ pelvis: 1 }) },
+    // The hip socket: five rings of hand-over so a 90-degree hip flexion folds
+    // at the groin instead of hinging a tube.
+    { y: 0.886, x, rx: 0.091, rz: 0.093, weights: wThigh(0.92) },
+    { y: 0.912, x, rx: 0.093, rz: 0.095, weights: wThigh(0.74) },
+    { y: 0.938, x, rx: 0.094, rz: 0.096, weights: wThigh(0.52) },
+    { y: 0.964, x: side * 0.093, rx: 0.092, rz: 0.095, weights: wThigh(0.3) },
+    { y: 0.986, x: side * 0.09, rx: 0.089, rz: 0.093, weights: wThigh(0.1) },
+    { y: 1.008, x: side * 0.088, rx: 0.086, rz: 0.09, weights: W({ pelvis: 1 }) },
   ];
 }
 
@@ -317,6 +340,12 @@ function buildPartGeometry(
   cap(part.stations[rings - 1], true);
 
   const geometry = new THREE.BufferGeometry();
+  // Ring layout for deformation checks: the loft is rings × segments, then two
+  // cap vertices. A ring is the cross-section that pinches when the blend is
+  // wrong, so the check measures its perimeter.
+  geometry.userData.rings = rings;
+  geometry.userData.segments = segments;
+  geometry.userData.loft = rings * segments;
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
   geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
@@ -351,6 +380,13 @@ export function buildSkin(
   SKIN_BONES.forEach((name, index) => {
     boneIndex[name] = index;
   });
+
+  // Dual-quaternion blend: linear blending scaled a ring down at a bent joint
+  // (cosine of half the joint angle), which is what pinched the shoulder and
+  // the hip. Blending the rigid transform instead keeps the ring's shape.
+  useDualQuaternionSkinning(materials.tunic);
+  useDualQuaternionSkinning(materials.trousers);
+  useDualQuaternionSkinning(materials.skin);
 
   const parts = skinParts();
   const skeleton = new THREE.Skeleton(SKIN_BONES.map((name) => bones[name]));

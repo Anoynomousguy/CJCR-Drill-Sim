@@ -4,8 +4,10 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GAIT_ANATOMY, type JointReading } from '../engine/anatomy';
 import { UNIFORMS } from '../engine/constants';
 import { sampleTimeline, type Timeline } from '../engine/simulate';
+import { sampleStepPlan } from '../engine/steps';
 import { useStore } from '../state/store';
 import { createFigure, type Figure, type FigurePalette } from './figure';
+import { applyDebugPose, DEBUG_POSE_CAMERA, readDebugPose } from './debugPose';
 
 type Preset = 'front' | 'flank' | 'overhead' | 'follow';
 
@@ -39,10 +41,28 @@ export function Stage3D() {
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
+    // `?pose=...` turns the stage into a full-size, fixed-camera rig viewer so
+    // the extreme poses can be re-entered and re-measured straight from the app.
+    const debugPose = readDebugPose();
+    const debugPatched = new WeakSet<Figure>();
+    if (debugPose) {
+      const host = mount.closest('.stage3d');
+      if (host instanceof HTMLElement) {
+        host.style.cssText =
+          'position:fixed;left:0;top:0;width:780px;height:880px;z-index:9999;background:#161d24';
+      }
+      const requestedBody = new URLSearchParams(window.location.search).get('body');
+      if (requestedBody === 'uniform' || requestedBody === 'muscles') {
+        useStore.getState().setBody(requestedBody);
+      }
+    }
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    // Soft PCF plus a tight shadow frustum: a 60 m frustum on a 2048 map gave
+    // ~3 cm texels, so a forearm's shadow on a hip came out as a hard black
+    // wedge that read as a torn flap of coat.
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -63,14 +83,16 @@ export function Stage3D() {
     const sun = new THREE.DirectionalLight('#fff3dc', 2.1);
     sun.position.set(22, 30, 16);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -30;
-    sun.shadow.camera.right = 30;
-    sun.shadow.camera.top = 30;
-    sun.shadow.camera.bottom = -30;
+    sun.shadow.mapSize.set(4096, 4096);
+    sun.shadow.camera.left = -22;
+    sun.shadow.camera.right = 22;
+    sun.shadow.camera.top = 22;
+    sun.shadow.camera.bottom = -22;
     sun.shadow.camera.near = 1;
     sun.shadow.camera.far = 90;
-    sun.shadow.bias = -0.0006;
+    sun.shadow.bias = -0.00015;
+    sun.shadow.normalBias = 0.02;
+    sun.shadow.radius = 2.5;
     scene.add(sun);
     scene.add(new THREE.AmbientLight('#9fb4c4', 0.25));
 
@@ -178,17 +200,62 @@ export function Stage3D() {
         fig.setMode(state.body);
         fig.setHeight(s.soldier.height);
         fig.setTransform(s.x, s.z, s.heading);
+        if (debugPose) {
+          fig.group.visible = s.soldier.id === sample.soldiers[0]?.soldier.id;
+          // The figure resolves its pose inside animate(), so an override applied
+          // after it is overwritten by the next frame. Wrap the call so the
+          // extreme pose is the last word before the skeleton is read.
+          if (!debugPatched.has(fig)) {
+            debugPatched.add(fig);
+            const original = fig.animate.bind(fig);
+            fig.animate = (anim) => {
+              original(anim);
+              applyDebugPose(fig, debugPose);
+            };
+          }
+        }
+        const dressing = sample.title.toLowerCase().includes('dress');
+        const stepPlan = sample.steps?.[s.soldier.id];
+        const step = stepPlan ? sampleStepPlan(stepPlan, sample.progress) : undefined;
+        const dressT = sample.progress;
         fig.animate({
           from: sample.from,
           to: sample.to,
           u: sample.u,
           gait: s.gait,
           stride: s.stride,
+          role: s.soldier.role,
+          code: s.code,
           time: now / 1000,
-          eyes: sample.u > 0.45 ? sample.to.eyes : sample.from.eyes,
+          eyes: dressing
+            ? sample.to.eyes
+            : sample.u > 0.45
+              ? sample.to.eyes
+              : sample.from.eyes,
           headdress: sample.u > 0.5 ? sample.to.headdress : sample.from.headdress,
-          dressing: sample.title.toLowerCase().includes('dress'),
+          dressing,
+          dressT,
+          // Right dress turns the head on TWO, after the check pace.
+          // The commander orders the dressing and watches it; he does not
+          // dress with the ranks, so his head stays front.
+          eyesAmount: dressing
+            ? s.soldier.role === 'commander'
+              ? 0
+              : Math.max(0, Math.min(1, (dressT - 0.2) / 0.18))
+            : 1,
+          // EYES FRONT after a right dress cuts the raised arm on ONE.
+          armFromDress:
+            sample.prevType === 'rightDress' && sample.title === 'Eyes front'
+              ? Math.max(0, 1 - sample.progress / 0.5)
+              : undefined,
+          feet: step
+            ? { left: step.left, right: step.right, hipY: step.hipY }
+            : sample.turnBody
+              ? { left: sample.turnBody.left, right: sample.turnBody.right, hipY: sample.turnBody.hipY }
+              : undefined,
+          armCut: stepPlan?.armsAt?.(sample.progress) ?? 0,
           turn: sample.turn,
+          rifle: sample.rifle,
         });
         fig.tick(dt, now / 1000);
       }
@@ -203,6 +270,16 @@ export function Stage3D() {
             angles: fig.getAngles(),
             muscles: fig.getMuscles().slice(0, 4),
           });
+        }
+      }
+      if (debugPose && sample.soldiers.length) {
+        const lead = api.figures.get(sample.soldiers[0].soldier.id);
+        if (lead) {
+          const cam = DEBUG_POSE_CAMERA[debugPose];
+          const offset = new THREE.Vector3(cam.x, 0, cam.z).applyQuaternion(lead.group.quaternion);
+          const origin = lead.group.position;
+          api.camera.position.set(origin.x + offset.x, cam.y, origin.z + offset.z);
+          api.controls.target.set(origin.x, cam.lookY, origin.z);
         }
       }
       if (api.preset === 'follow' && sample.soldiers.length) {

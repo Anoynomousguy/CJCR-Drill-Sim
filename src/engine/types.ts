@@ -21,6 +21,7 @@ export type HeadDress = 'worn' | 'removed';
 export type Spacing = 'close' | 'open';
 export type Uniform = 'army' | 'sea' | 'air';
 export type StepMode = 'normal' | 'out' | 'short';
+export type FootStance = 'attention' | 'present';
 export type Role = 'cadet' | 'marker' | 'commander' | 'wo' | 'colourOfficer' | 'colourEscort';
 export type Discipline = 'foot' | 'rifle' | 'colour' | 'ceremonial';
 
@@ -88,6 +89,8 @@ export interface SoldierState extends Soldier {
 export interface Snapshot {
   posture: Posture;
   weapon: WeaponState;
+  /** Rifle foot stance; PRESENT ARMS puts the right foot behind the left. */
+  stance?: FootStance;
   colour: ColourState;
   gait: Gait;
   eyes: Eyes;

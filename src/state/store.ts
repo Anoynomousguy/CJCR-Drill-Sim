@@ -33,6 +33,11 @@ function demoProgramme(): MovementInstance[] {
     build('slopeArms'),
     build('quickMarch', { paces: 10 }),
     build('rightTurnOnMarch'),
+    // The turn ends on the right foot, but HALT is commanded on the left
+    // (Ch 3, halt). The squad must take the intervening left pace before the
+    // halt can start with the left foot forward; without it the handler sees
+    // the turn's right-forward stance and mirrors the whole halt.
+    build('quickMarch', { paces: 2 }),
     build('halt'),
     build('presentArms'),
     build('carryColour'),
