@@ -159,6 +159,99 @@ const canonical = (settings: Plan['settings'], roster: Plan['roster'], spacing: 
   return map;
 };
 
+/**
+ * RIGHT DRESS dresses on the right-hand person of the front rank. The role
+ * slots are fitted to the formation as it currently stands with one rigid
+ * rotation and translation: a squad that has turned in place keeps the facing
+ * it turned to, and a fall-in's small dressing errors are closed up, but no
+ * one is sent back to the slot they held before the turn. The right-hand
+ * person of the current front rank is the one who stands fast.
+ */
+function dressedLayout(
+  settings: Plan['settings'],
+  roster: Plan['roster'],
+  spacing: Snapshot['spacing'],
+  soldiers: Soldier[],
+  local: LocalMap,
+): { targets: LocalMap; standFast: string | null } {
+  const homes = canonical(settings, roster, spacing);
+  const ranks = soldiers.filter((s) => s.rank < 90);
+  if (!ranks.length) return { targets: homes, standFast: null };
+  const current = (s: Soldier) => local[s.id] ?? { lx: s.lx, lz: s.lz };
+  const home = (s: Soldier) => homes[s.id] ?? { lx: s.lx, lz: s.lz };
+
+  // Best-fit rotation from the role slots to the slots the squad is standing
+  // on now. Centring first removes the translation from the fit.
+  let cx = 0;
+  let cz = 0;
+  let kx = 0;
+  let kz = 0;
+  for (const s of ranks) {
+    const c = home(s);
+    const k = current(s);
+    cx += c.lx;
+    cz += c.lz;
+    kx += k.lx;
+    kz += k.lz;
+  }
+  cx /= ranks.length;
+  cz /= ranks.length;
+  kx /= ranks.length;
+  kz /= ranks.length;
+  let cross = 0;
+  let dot = 0;
+  for (const s of ranks) {
+    const c = home(s);
+    const k = current(s);
+    const ax = c.lx - cx;
+    const az = c.lz - cz;
+    const bx = k.lx - kx;
+    const bz = k.lz - kz;
+    cross += ax * bz - az * bx;
+    dot += ax * bx + az * bz;
+  }
+  // Drill turns are 45° multiples. Snapping the fit keeps a fall-in's small
+  // dressing errors from rotating the whole grid by a degree or two.
+  const step = Math.PI / 4;
+  const angle =
+    Math.hypot(cross, dot) > 1e-9 ? Math.round(Math.atan2(cross, dot) / step) * step : 0;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const rotate = (p: { lx: number; lz: number }) => ({
+    lx: p.lx * cos - p.lz * sin,
+    lz: p.lx * sin + p.lz * cos,
+  });
+
+  // The front rank is the forward-most line. Its right-hand person stands
+  // fast; anchoring their target on their current slot also takes up any
+  // pivot drift the turns left behind. The right-hand person is chosen from
+  // the fitted role slots, not the jittered fall-in positions, so the right
+  // marker still leads a fresh dress.
+  const frontZ = Math.max(...ranks.map((s) => current(s).lz));
+  const front = ranks.filter((s) => current(s).lz >= frontZ - 0.3);
+  const standFast = front.reduce((best, s) =>
+    rotate(home(s)).lx > rotate(home(best)).lx ? s : best,
+  );
+  const anchorHome = rotate(home(standFast));
+  const anchor = current(standFast);
+  const tx = anchor.lx - anchorHome.lx;
+  const tz = anchor.lz - anchorHome.lz;
+
+  const targets: LocalMap = {};
+  for (const s of soldiers) {
+    if (s.role === 'commander') {
+      // The commander orders the dress and watches it; he does not dress
+      // with the ranks.
+      const k = current(s);
+      targets[s.id] = { lx: k.lx, lz: k.lz };
+      continue;
+    }
+    const c = rotate(home(s));
+    targets[s.id] = { lx: c.lx + tx, lz: c.lz + tz };
+  }
+  return { targets, standFast: standFast.id };
+}
+
 /** The feet left by the previous movement, in the new body frame. */
 function priorFeet(
   prev: Segment | undefined,
@@ -376,6 +469,7 @@ export function buildTimeline(plan: Plan): Timeline {
     let scope: Segment['scope'] = def.scope ?? 'all';
     let marchLeadIn = false;
     let marchDist = 0;
+    let dressStandFast: string | null = null;
 
     const prevSeg = segments[segments.length - 1];
     const prevMarchPlan = prevSeg?.steps
@@ -601,7 +695,18 @@ export function buildTimeline(plan: Plan): Timeline {
         break;
       }
       case 'dress': {
-        toLocal = canonical(settings, plan.roster, toSnapshot.spacing);
+        // Dress on the formation the squad is standing in now, not on the
+        // role slots it held before any turns: a right dress after an about
+        // turn must not march the squad back across the square.
+        const dressed = dressedLayout(
+          settings,
+          plan.roster,
+          toSnapshot.spacing,
+          soldiers,
+          fromLocal,
+        );
+        toLocal = dressed.targets;
+        dressStandFast = dressed.standFast;
         if (eff.eyes) toSnapshot.eyes = eff.eyes;
         if (eff.posture) toSnapshot.posture = eff.posture;
         duration = def.counts * BEAT + 2 * BEAT;
@@ -889,7 +994,7 @@ export function buildTimeline(plan: Plan): Timeline {
         } else if (def.kind === 'dress') {
           plan = makeDressPlan({
             total,
-            marker: s.role === 'marker',
+            standFast: s.id === dressStandFast,
             commander: s.role === 'commander',
           });
         } else {

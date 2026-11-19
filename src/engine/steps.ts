@@ -945,14 +945,16 @@ function hermite(p0: number, m0: number, p1: number, m1: number, t: number, h: n
  * comes up over the planted ball as the left goes forward, so the right knee
  * is visibly bent during the check pace, exactly as the manual describes.
  * On TWO the arm goes up. On THREE the short quick paces start with the LEFT
- * foot and finish with the right. The marker stands fast.
+ * foot and finish with the right. The right-hand person of the front rank
+ * stands fast.
  */
 export function makeDressPlan(opts: {
   total: Vec2;
-  marker: boolean;
+  /** The right-hand person of the front rank keeps their feet still. */
+  standFast: boolean;
   commander: boolean;
 }): StepPlan | null {
-  if (opts.marker || opts.commander) return null;
+  if (opts.standFast || opts.commander) return null;
   const actionBeats = 5;
   const total = { x: opts.total.x, z: opts.total.z };
   const start = {

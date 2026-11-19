@@ -188,7 +188,7 @@ describe('open and close order', () => {
 
 describe('right dress footwork', () => {
   it('takes the check pace with the body, then settles, marker stands fast', () => {
-    const p = makeDressPlan({ total: { x: 0, z: 0 }, marker: false, commander: false })!;
+    const p = makeDressPlan({ total: { x: 0, z: 0 }, standFast: false, commander: false })!;
     expect(p.movements).toEqual(['check pace', 'short quick paces', 'close']);
     expect(stepCount(p)).toBe(4);
     expectNoSlip(p);
@@ -221,12 +221,12 @@ describe('right dress footwork', () => {
     const end = sampleStepPlan(p, 1);
     expect(Math.abs(end.body.z)).toBeLessThan(1e-6);
     expect(Math.abs(end.left.z)).toBeLessThan(1e-6);
-    expect(makeDressPlan({ total: { x: 0, z: 0 }, marker: true, commander: false })).toBeNull();
-    expect(makeDressPlan({ total: { x: 0.2, z: 0 }, marker: false, commander: true })).toBeNull();
+    expect(makeDressPlan({ total: { x: 0, z: 0 }, standFast: true, commander: false })).toBeNull();
+    expect(makeDressPlan({ total: { x: 0.2, z: 0 }, standFast: false, commander: true })).toBeNull();
   });
 
   it('dresses a soldier onto a displaced slot with short paces', () => {
-    const p = makeDressPlan({ total: { x: -0.12, z: 0.08 }, marker: false, commander: false })!;
+    const p = makeDressPlan({ total: { x: -0.12, z: 0.08 }, standFast: false, commander: false })!;
     expectNoSlip(p);
     expectReachable(p);
     const endL = worldFoot(p, 1, 'L');
@@ -241,7 +241,7 @@ describe('right dress footwork', () => {
   });
 
   it('makes the left short pace land before the right on a displaced slot', () => {
-    const p = makeDressPlan({ total: { x: -0.12, z: 0.08 }, marker: false, commander: false })!;
+    const p = makeDressPlan({ total: { x: -0.12, z: 0.08 }, standFast: false, commander: false })!;
     expectNoSlip(p);
     expectReachable(p);
     const left = p.left.find((plant) => plant.land > 0.5)!;

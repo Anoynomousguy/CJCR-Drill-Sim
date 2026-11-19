@@ -267,7 +267,7 @@ describe('step plans on the live rig', () => {
     // the pelvis travels with the left boot again, the right leg straightens
     // and this drops back to ~11 degrees while every contact still passes.
     const fig = createFigure({ palette, detail: 'low' }, false, false);
-    const plan = makeDressPlan({ total: { x: 0, z: 0 }, marker: false, commander: false })!;
+    const plan = makeDressPlan({ total: { x: 0, z: 0 }, standFast: false, commander: false })!;
     const step = sampleStepPlan(plan, 0.5);
     fig.setTransform(step.body.x, step.body.z, 0);
     fig.animate({
