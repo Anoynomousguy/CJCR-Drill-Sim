@@ -17,7 +17,13 @@ const BASE: Snapshot = {
   spacing: 'close',
 };
 
-function pose(fig: Figure, snapshot: Snapshot, role: Role, dressing = false) {
+function pose(
+  fig: Figure,
+  snapshot: Snapshot,
+  role: Role,
+  dressing = false,
+  commanderSalute = 0,
+) {
   const code = movementCode({ id: `test-${role}`, role, rank: role === 'commander' ? 99 : 0 });
   for (let i = 0; i < 30; i += 1) {
     fig.animate({
@@ -32,6 +38,7 @@ function pose(fig: Figure, snapshot: Snapshot, role: Role, dressing = false) {
       dressing,
       role,
       code,
+      commanderSalute,
     });
   }
 }
@@ -109,7 +116,9 @@ describe('position codes on the rig', () => {
 
   it('salutes on an eyes-right when the person is in command', () => {
     const commander = createFigure({ palette, detail: 'low' }, false, false);
-    pose(commander, { ...BASE, eyes: 'right' }, 'commander');
+    // The engine counts the eyes-right salute up over the movement; on the rig
+    // it is the commander's weight that raises the arm.
+    pose(commander, { ...BASE, eyes: 'right' }, 'commander', false, 1);
     // The salute hand sits at the brow, above the shoulder joint (~1.4 m).
     expect(handHeight(commander)).toBeGreaterThan(1.5);
   });

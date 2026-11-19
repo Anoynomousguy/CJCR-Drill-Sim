@@ -112,6 +112,8 @@ export interface FigureAnim {
   armCut?: number;
   /** 0..1 right-arm salute: 1 through the standard pause, 0 after the cut. */
   saluteArm?: number;
+  /** 0..1 commander's salute on EYES RIGHT, cut on EYES FRONT. */
+  commanderSalute?: number;
   /** A commanded turn's manual breakdown; omit for free-standing turns. */
   turn?: { plan: TurnPlan; progress: number };
   /** Count-sampled Lee-Enfield carriage and hand grips. */
@@ -1047,11 +1049,16 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         (eyes === 'right' ? -EYES_RIGHT.cervical : eyes === 'left' ? EYES_RIGHT.cervical : 0) *
         headFollow *
         eyesFactor;
-      // On an eyes-right the person in command salutes. Right dress is not a
-      // salute: the commander orders the dressing and then EYES FRONT
-      // (A-DH-201-000 Ch 7), so the arm stays down while the squad looks right.
-      const saluting =
-        anim.role === 'commander' && eyes !== 'front' && !anim.dressing && !hasRifle && !hasColour;
+      // On an eyes-right the person in command salutes, and EYES FRONT cuts
+      // that salute. The engine counts the weight so the arm rises and falls
+      // through the movement instead of snapping between two frames. Right
+      // dress is not a salute: the commander orders the dressing and then EYES
+      // FRONT (A-DH-201-000 Ch 7), so the arm stays down while the squad looks
+      // right.
+      const commanderSalute =
+        anim.role === 'commander' && !anim.dressing && !hasRifle && !hasColour
+          ? clamp01(anim.commanderSalute ?? 0)
+          : 0;
       const armScale = anim.code?.armSwing ?? 1;
       const lagRate = 1 - Math.exp(-Math.max(0.004, dt) * 13);
       const chestTarget = g.yaw * 1.05 * blend + leads.chestYaw * turnWeight;
@@ -1214,7 +1221,7 @@ export function createFigure(kit: FigureKit, hasRifle: boolean, hasColour: boole
         (anim.from.posture === 'salute' ? 1 - u : 0) + (anim.to.posture === 'salute' ? u : 0);
       const saluteArm =
         gripR < 0.5
-          ? Math.max(saluteFromPosture, clamp01(anim.saluteArm ?? 0), saluting ? 1 : 0)
+          ? Math.max(saluteFromPosture, clamp01(anim.saluteArm ?? 0), commanderSalute)
           : 0;
       const rifleSalute = saluteArm > 0 && hasRifle && weaponFrame !== null;
       if (saluteArm > 0) {

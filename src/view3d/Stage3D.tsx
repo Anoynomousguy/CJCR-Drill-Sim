@@ -229,9 +229,13 @@ export function Stage3D() {
           time: now / 1000,
           eyes: dressing
             ? sample.to.eyes
-            : sample.u > 0.45
-              ? sample.to.eyes
-              : sample.from.eyes,
+            : sample.eyesAmount !== undefined
+              ? sample.eyesAmount > 0.001
+                ? 'right'
+                : 'front'
+              : sample.u > 0.45
+                ? sample.to.eyes
+                : sample.from.eyes,
           headdress: sample.u > 0.5 ? sample.to.headdress : sample.from.headdress,
           dressing,
           dressT,
@@ -242,7 +246,7 @@ export function Stage3D() {
             ? s.soldier.role === 'commander'
               ? 0
               : Math.max(0, Math.min(1, (dressT - 0.2) / 0.18))
-            : 1,
+            : (sample.eyesAmount ?? 1),
           // EYES FRONT after a right dress cuts the raised arm on ONE.
           armFromDress:
             sample.prevType === 'rightDress' && sample.title === 'Eyes front'
@@ -255,6 +259,7 @@ export function Stage3D() {
               : undefined,
           armCut: stepPlan?.armsAt?.(sample.progress) ?? 0,
           saluteArm: sample.saluteArm,
+          commanderSalute: sample.commanderSalute,
           turn: sample.turn,
           rifle: sample.rifle,
         });

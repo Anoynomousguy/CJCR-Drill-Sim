@@ -566,9 +566,9 @@ const footMarch: MoveDef[] = [
     words: 'SQUAD — TO THE RIGHT — SALUTE',
     reference: 'Ch 3 · Salute on the march without arms',
     kind: 'saluteMarch',
-    counts: 4,
-    effect: { posture: 'salute' },
-    help: 'Eyes turn to the right, the right arm comes up as the left foot lands; held for six paces.',
+    counts: 8,
+    effect: { posture: 'attention' },
+    help: 'Given on the left foot: CHECK with the right, the right arm up with the left on UP, held through TWO, THREE, FOUR and FIVE, cut on DOWN with the right foot, and the arms swing again from SWING on the left. The head turns right on UP and is back to the front by SWING — eight paces in all.',
   },
   {
     type: 'eyesRight',

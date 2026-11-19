@@ -29,7 +29,7 @@ import {
 } from './steps';
 import { makeMarchTurnPlan, marchTurnBodyAt } from './marchTurn';
 import { aboutTurnBodyAt, makeAboutTurnPlan } from './aboutTurn';
-import { saluteArmAt } from './pose';
+import { marchSaluteAt, marchSaluteEyesAt, saluteArmAt } from './pose';
 import { riflePlanFor, sampleRifle, type RiflePlan, type RifleSample } from './rifle';
 import { makeTurnPlan, turnBodyAt, turnHeadingAt, type TurnBody, type TurnPlan } from './turn';
 import type { Frame, Gait, Plan, Snapshot, Soldier } from './types';
@@ -73,8 +73,10 @@ export interface Segment {
   moveEnd?: number;
   /** Per-count Lee-Enfield carriage plan. */
   rifle?: RiflePlan;
-  /** A salute's two movements: ONE raise, the standard pause, TWO cut. */
-  salute?: boolean;
+  /** Which salute arm profile this segment runs, if any. */
+  salute?: 'halt' | 'march';
+  /** The commander's eyes-right salute; EYES FRONT cuts it. */
+  commanderSalute?: 'raise' | 'hold' | 'cut';
   /** This march continues the plant-to-plant phase out of a turn. */
   leadIn?: boolean;
 }
@@ -116,6 +118,10 @@ export interface Sample {
   rifle?: RifleSample;
   /** 0..1 right-arm salute: 1 through the standard pause, 0 after the cut. */
   saluteArm?: number;
+  /** 0..1 head turn to the right for a movement that turns it on a footfall. */
+  eyesAmount?: number;
+  /** 0..1 commander's salute on EYES RIGHT, cut on EYES FRONT. */
+  commanderSalute?: number;
   /** Per-soldier step plans for this movement, when it has explicit footwork. */
   steps?: Record<string, StepPlan>;
   /** Previous movement type, so EYES FRONT can cut a held dressing arm. */
@@ -233,9 +239,13 @@ function commandFoot(type: string | undefined, gait: Gait): 'L' | 'R' | null {
   // change direction by forming).
   if (type === 'formRight') return 'L';
   if (type === 'formLeft') return 'R';
-  // SALUTE, EYES RIGHT/FRONT, STEP OUT/SHORT and FORWARD are given mid-march;
-  // the march continues through them, so forcing its last foot at the segment
-  // seam would insert a half-beat step instead of timing the command.
+  // SALUTE, EYES RIGHT and EYES FRONT on the march are given as the left foot
+  // is forward and on the ground (Ch 3), so the march handing over to them
+  // finishes on the left foot.
+  if (type === 'saluteOnMarch' || type === 'eyesRight' || type === 'eyesFrontMarch') return 'L';
+  // STEP OUT/SHORT and FORWARD are given mid-march and the march continues
+  // through them, so forcing its last foot at the seam would insert a
+  // half-beat step instead of timing the command.
   return null;
 }
 
@@ -285,6 +295,11 @@ export function buildTimeline(plan: Plan): Timeline {
   });
 
   const segments: Segment[] = [];
+  // The commander's eyes-right salute is a state, not a single frame: it rises
+  // on EYES RIGHT, is held through whatever is marched in between, and is cut
+  // by EYES FRONT. A salute on the march cuts the arm on its own DOWN count,
+  // so it ends the hold even though the eyes stay right.
+  let commanderSaluteHeld = false;
   let t = 0;
 
   plan.programme.forEach((instance, index) => {
@@ -352,6 +367,8 @@ export function buildTimeline(plan: Plan): Timeline {
     let marchDist = 0;
 
     const paces = Math.max(1, Number(params.paces ?? 1));
+    // A salute on the march is eight paces (Ch 3), not a user parameter.
+    const paceCount = def.kind === 'saluteMarch' ? def.counts : paces;
 
     switch (def.kind) {
       case 'state':
@@ -626,9 +643,38 @@ export function buildTimeline(plan: Plan): Timeline {
         break;
       }
       case 'saluteMarch': {
-        toSnapshot.posture = 'salute';
-        toSnapshot.eyes = 'right';
-        duration = def.counts * BEAT;
+        // Eight paces on the spot is not a salute: the squad marches past, the
+        // arm comes up on UP and is cut on DOWN, and the head turns right on UP
+        // and comes back to the front by SWING. The salute completes itself, so
+        // it leaves the squad with head and eyes front, not waiting for an EYES
+        // FRONT that this command never orders. The boots are planned like any
+        // march so the counts land on the footfalls the manual names.
+        toSnapshot.posture = 'attention';
+        toSnapshot.eyes = 'front';
+        const len = stepLength(toSnapshot);
+        const cadence = cadenceOf(toSnapshot.gait, settings.cadence);
+        duration = (def.counts * 60) / cadence;
+        const f = forwardOf(frame.heading);
+        const dist = marchTravel(def.counts, len, fromSnapshot.gait === 'halt');
+        toFrame.x += f.x * dist;
+        toFrame.z += f.z * dist;
+        marchDist = dist;
+        const prevSeg = segments[segments.length - 1];
+        marchLeadIn = Boolean(
+          prevSeg?.turn?.march ||
+            prevSeg?.turn?.about ||
+            prevSeg?.leadIn ||
+            prevSeg?.type === 'changeStep',
+        );
+        if (fromSnapshot.gait !== 'quick') {
+          warnings.push({
+            moveIndex: index,
+            moveId: instance.id,
+            severity: 'info',
+            message: `${def.title}: the quick-time salute on the march is modelled; the squad is ${fromSnapshot.gait === 'halt' ? 'halted' : `in ${fromSnapshot.gait} time`}.`,
+          });
+        }
+        mode = 'linear';
         break;
       }
       default:
@@ -657,6 +703,7 @@ export function buildTimeline(plan: Plan): Timeline {
     const needsPlan =
       def.kind === 'pace' ||
       def.kind === 'march' ||
+      def.kind === 'saluteMarch' ||
       def.kind === 'order' ||
       def.kind === 'halt' ||
       def.kind === 'dress' ||
@@ -673,7 +720,11 @@ export function buildTimeline(plan: Plan): Timeline {
         const cos = Math.cos(heading);
         // Paces and the halt move the frame; open/close, dress and fall-in
         // move each person's slot within it.
-        const useFrame = def.kind === 'pace' || def.kind === 'march' || def.kind === 'halt';
+        const useFrame =
+          def.kind === 'pace' ||
+          def.kind === 'march' ||
+          def.kind === 'saluteMarch' ||
+          def.kind === 'halt';
         const dx = useFrame ? toFrame.x - fromFrame.x : b.lx - a.lx;
         const dz = useFrame ? toFrame.z - fromFrame.z : b.lz - a.lz;
         // formation displacement -> this soldier's body frame (x left, z forward)
@@ -714,7 +765,7 @@ export function buildTimeline(plan: Plan): Timeline {
                 ? makeSlowHaltPlan({ startLeft: start.left, startRight: start.right })
                 : makeHaltPlan({ startLeft: start.left, startRight: start.right });
           }
-        } else if (def.kind === 'march') {
+        } else if (def.kind === 'march' || def.kind === 'saluteMarch') {
           // Continue from the exact boots the last movement left, and finish on
           // the foot the next command names, so no seam snaps a planted foot.
           const start = priorStart(
@@ -729,7 +780,7 @@ export function buildTimeline(plan: Plan): Timeline {
           const lead = start.left.z <= start.right.z ? 'L' : 'R';
           plan = makeMarchPlan({
             start,
-            paces,
+            paces: paceCount,
             lead,
             distance: total.z,
             endFoot: commandFoot(nextType, toSnapshot.gait),
@@ -824,7 +875,7 @@ export function buildTimeline(plan: Plan): Timeline {
       }
     }
 
-    if (def.kind === 'march' && steps) {
+    if ((def.kind === 'march' || def.kind === 'saluteMarch') && steps) {
       const leadPlan = Object.values(steps).find((p) => p.kind === 'march');
       if (leadPlan) {
         // A lead-in closes the offset the turn left the body with, and a
@@ -885,6 +936,19 @@ export function buildTimeline(plan: Plan): Timeline {
       stride[s.id] = (stride[s.id] ?? 0) + travelled;
     }
 
+    let commanderSalute: Segment['commanderSalute'];
+    if (instance.type === 'eyesRight') {
+      commanderSalute = fromSnapshot.eyes !== 'right' ? 'raise' : 'hold';
+      commanderSaluteHeld = true;
+    } else if (instance.type === 'eyesFrontMarch') {
+      commanderSalute = commanderSaluteHeld ? 'cut' : undefined;
+      commanderSaluteHeld = false;
+    } else if (instance.type === 'saluteOnMarch') {
+      commanderSaluteHeld = false;
+    } else if (commanderSaluteHeld) {
+      commanderSalute = 'hold';
+    }
+
     segments.push({
       index,
       moveId: instance.id,
@@ -910,7 +974,12 @@ export function buildTimeline(plan: Plan): Timeline {
       moveEnd,
       rifle: rifle ?? undefined,
       salute:
-        instance.type === 'salute' || instance.type === 'saluteAtSlope' || undefined,
+        instance.type === 'salute' || instance.type === 'saluteAtSlope'
+          ? 'halt'
+          : instance.type === 'saluteOnMarch'
+            ? 'march'
+            : undefined,
+      commanderSalute,
       leadIn: marchLeadIn || undefined,
     });
 
@@ -1122,7 +1191,20 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
     turn: seg.turn ? { plan: seg.turn, progress: raw } : undefined,
     turnBody: turnBody ?? undefined,
     rifle,
-    saluteArm: seg.salute ? saluteArmAt(raw) : undefined,
+    saluteArm: seg.salute
+      ? seg.salute === 'march'
+        ? marchSaluteAt(raw)
+        : saluteArmAt(raw)
+      : undefined,
+    eyesAmount: seg.salute === 'march' ? marchSaluteEyesAt(raw) : undefined,
+    commanderSalute:
+      seg.commanderSalute === 'raise'
+        ? smoothstep(raw)
+        : seg.commanderSalute === 'cut'
+          ? 1 - smoothstep(raw)
+          : seg.commanderSalute === 'hold'
+            ? 1
+            : undefined,
     steps: seg.steps,
     prevType: seg.index > 0 ? timeline.segments[seg.index - 1].type : '',
     soldiers,

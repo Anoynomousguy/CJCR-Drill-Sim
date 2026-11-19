@@ -134,6 +134,54 @@ export function saluteArmAt(raw: number): number {
 }
 
 /**
+ * SALUTE ON THE MARCH WITHOUT ARMS (Ch 3). The command is given on the left
+ * foot; the counts are CHECK – UP – TWO – THREE – FOUR – FIVE – DOWN – SWING,
+ * one footfall each, and the squad covers a pace per count. The right arm comes
+ * up with the left foot on UP, is held through FIVE, is cut as the right foot
+ * lands on DOWN, and the arms swing again from SWING on the left.
+ *
+ * A march segment's plants sit half a beat inside its ends (the seam between
+ * two marches falls half a beat after the last plant), so the eight footfalls
+ * are at 0.5 … 7.5 of the eight beats.
+ */
+export const MARCH_SALUTE_UP = 1.5 / 8;
+export const MARCH_SALUTE_CUT = 5.5 / 8;
+export const MARCH_SALUTE_DOWN = 6.5 / 8;
+const MARCH_SALUTE_CHECK = 0.5 / 8;
+/** The SWING left footfall: the head is back to the front by then. */
+export const MARCH_SALUTE_SWING = 7.5 / 8;
+
+export function marchSaluteAt(raw: number): number {
+  const t = clamp01(raw);
+  if (t <= MARCH_SALUTE_CHECK) return 0;
+  if (t < MARCH_SALUTE_UP) {
+    return smoothstep((t - MARCH_SALUTE_CHECK) / (MARCH_SALUTE_UP - MARCH_SALUTE_CHECK));
+  }
+  if (t <= MARCH_SALUTE_CUT) return 1;
+  if (t < MARCH_SALUTE_DOWN) {
+    return 1 - smoothstep((t - MARCH_SALUTE_CUT) / (MARCH_SALUTE_DOWN - MARCH_SALUTE_CUT));
+  }
+  return 0;
+}
+
+/**
+ * The head turns right on the UP left footfall and is held while saluting (Ch
+ * 3: "while saluting, the head is turned right"). The salute completes with the
+ * arm cut on DOWN, a right foot; the head cuts back to the front on the next
+ * left foot (SWING), the same way EYES FRONT cuts it on a left footfall. The
+ * salute is then self-contained: no EYES FRONT is needed to finish it.
+ */
+export function marchSaluteEyesAt(raw: number): number {
+  const t = clamp01(raw);
+  if (t < MARCH_SALUTE_UP) return 0;
+  if (t <= MARCH_SALUTE_DOWN) return 1;
+  if (t < MARCH_SALUTE_SWING) {
+    return 1 - smoothstep((t - MARCH_SALUTE_DOWN) / (MARCH_SALUTE_SWING - MARCH_SALUTE_DOWN));
+  }
+  return 0;
+}
+
+/**
  * The elbow of the armed salute. 54-04 para 90 puts the right forearm
  * horizontal while the hand strikes the small of the butt, so the elbow sits
  * on the horizontal plane through the wrist. Of the two intersections of that
