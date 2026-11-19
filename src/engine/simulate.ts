@@ -22,6 +22,7 @@ import {
   makePacesPlan,
   makePresentFootPlan,
   makeSidePlan,
+  makeSlowHaltPlan,
   marchTravel,
   sampleStepPlan,
   type StepPlan,
@@ -211,20 +212,25 @@ function gaitStartFeet(
 }
 
 /** The foot the next command requires forward. */
-function commandFoot(type: string | undefined): 'L' | 'R' | null {
+function commandFoot(type: string | undefined, gait: Gait): 'L' | 'R' | null {
   if (!type) return null;
-  if (
-    type === 'rightTurnOnMarch' ||
-    type === 'rightInclineOnMarch' ||
-    type === 'halt'
-  ) {
-    return 'L';
-  }
+  if (type === 'rightTurnOnMarch' || type === 'rightInclineOnMarch') return 'L';
   if (type === 'leftTurnOnMarch' || type === 'leftInclineOnMarch') return 'R';
   // CHANGE STEP is given as the right foot is forward and on the ground.
   if (type === 'changeStep') return 'R';
   // The about turn on the march is always given as the right foot is forward.
   if (type === 'aboutTurnOnMarch') return 'R';
+  // Slow-time halt is given on the right foot; every other halt on the left.
+  if (type === 'halt') return gait === 'slow' ? 'R' : 'L';
+  // MARK TIME is given as the right foot is forward and on the ground.
+  if (type === 'markTime') return 'R';
+  // A right form is given on the left foot, a left form on the right (Ch 3,
+  // change direction by forming).
+  if (type === 'formRight') return 'L';
+  if (type === 'formLeft') return 'R';
+  // SALUTE, EYES RIGHT/FRONT, STEP OUT/SHORT and FORWARD are given mid-march;
+  // the march continues through them, so forcing its last foot at the segment
+  // seam would insert a half-beat step instead of timing the command.
   return null;
 }
 
@@ -428,7 +434,10 @@ export function buildTimeline(plan: Plan): Timeline {
       }
       case 'pace': {
         const dir = String(params.dir ?? 'forward');
-        const metres = paces <= 3 && (dir === 'forward' || dir === 'back') ? PACE_HALF : PACE;
+        // Paces forward and to the rear are half paces, never full marching
+        // paces (Ch 2, paras 69-78); the three-pace cap is in the movement
+        // parameters.
+        const metres = dir === 'forward' || dir === 'back' ? PACE_HALF : PACE_SIDE;
         const d = paces * (dir === 'left' || dir === 'right' ? PACE_SIDE : metres);
         const f = forwardOf(frame.heading);
         const r = rightOf(frame.heading);
@@ -494,18 +503,13 @@ export function buildTimeline(plan: Plan): Timeline {
       case 'halt': {
         toSnapshot.gait = 'halt';
         toSnapshot.posture = 'attention';
-        duration = 2 * BEAT;
-        // The command is given on the left foot: the right foot checks the
-        // movement with one more pace, the left takes a half pace, and the
-        // right knee closes to attention. The net travel of the body is the
-        // half pace, not a full pace. A halt from the halt simply comes to
-        // attention.
-        if (fromSnapshot.gait !== 'halt') {
-          const f = forwardOf(frame.heading);
-          toFrame.x += f.x * PACE_HALF;
-          toFrame.z += f.z * PACE_HALF;
-          mode = 'linear';
-        }
+        // Quick time: three movements, the trailing boot taking one more pace
+        // and the forward boot a half pace. Slow time: two movements, the
+        // left half pace and the right foot brought forward in quick time.
+        // The frame advance is taken from the step plan, which owns the
+        // actual foot placements.
+        duration = fromSnapshot.gait === 'slow' ? 3 * BEAT : 2 * BEAT;
+        if (fromSnapshot.gait !== 'halt') mode = 'linear';
         break;
       }
       case 'markTime': {
@@ -526,12 +530,12 @@ export function buildTimeline(plan: Plan): Timeline {
             message: `${def.title}: the quick-time change step is modelled; the squad is ${fromSnapshot.gait === 'halt' ? 'halted' : `in ${fromSnapshot.gait} time`}.`,
           });
         }
-        // The command falls on the right footfall and the first count is half
-        // a beat later, so three boots land at +0.5, +1.5 and +2.5 beats. The
+        // The command falls on the right footfall and the counts are called in
+        // double time, so three boots land at +0.5, +1 and +1.5 beats. The
         // action ends on the third landing; the next march plants one beat
         // after it, keeping the fast cadence right through the seam. The frame
         // travel is taken from the plan once the boots are known.
-        duration = 2.5 * BEAT;
+        duration = 1.5 * BEAT;
         mode = 'linear';
         break;
       }
@@ -626,6 +630,12 @@ export function buildTimeline(plan: Plan): Timeline {
     // hand grips and the manual's footwork.
     const rifle = def.discipline === 'rifle' ? riflePlanFor(instance.type, fromSnapshot.weapon) : null;
     if (rifle) duration = rifle.duration;
+    else if (def.discipline === 'rifle') {
+      // No count-sampled carriage for this movement yet, but the manual still
+      // gives numbered movements separated by the standard pause. Without
+      // this a five-movement port arms ran as a single two-second blend.
+      duration = def.counts * BEAT + Math.max(0, def.counts - 1) * STANDARD_PAUSE;
+    }
 
     // --- explicit footwork -------------------------------------------------
     // Movements at the halt are not a slide from A to B. Each foot is given a
@@ -686,11 +696,12 @@ export function buildTimeline(plan: Plan): Timeline {
               stride0[s.id] ?? 0,
               t,
             );
-            plan = makeHaltPlan({
-              total,
-              startLeft: start.left,
-              startRight: start.right,
-            });
+            // The plan derives its own final position from the boots at the
+            // command; the formation is advanced from that total afterwards.
+            plan =
+              fromSnapshot.gait === 'slow'
+                ? makeSlowHaltPlan({ startLeft: start.left, startRight: start.right })
+                : makeHaltPlan({ startLeft: start.left, startRight: start.right });
           }
         } else if (def.kind === 'march') {
           // Continue from the exact boots the last movement left, and finish on
@@ -710,7 +721,7 @@ export function buildTimeline(plan: Plan): Timeline {
             paces,
             lead,
             distance: total.z,
-            endFoot: commandFoot(nextType),
+            endFoot: commandFoot(nextType, toSnapshot.gait),
             // Into a turn or a halt the trail boot must already be swinging,
             // or the next movement starts from a crouch: a boot held flat a
             // whole pace behind the pelvis forces the hip down to 0.59 m and
@@ -802,17 +813,33 @@ export function buildTimeline(plan: Plan): Timeline {
       }
     }
 
-    if (marchLeadIn && steps) {
+    if (def.kind === 'march' && steps) {
       const leadPlan = Object.values(steps).find((p) => p.kind === 'march');
       if (leadPlan) {
-        // The lead-in's first step closes the offset the turn left the body
-        // with, and an extra pace may be added so the march finishes on the
-        // next command's foot. Both change the ground the formation gains.
+        // A lead-in closes the offset the turn left the body with, and a
+        // hand-over footfall adds half an interval of time and half a pace of
+        // ground. Keep the formation on the same displacement as the boots.
         const delta = leadPlan.total.z - marchDist;
+        if (Math.abs(delta) > 1e-9) {
+          const f = forwardOf(frame.heading);
+          toFrame.x += f.x * delta;
+          toFrame.z += f.z * delta;
+        }
+        duration =
+          leadPlan.beats! * (60 / cadenceOf(toSnapshot.gait, settings.cadence));
+      }
+    }
+
+    if (def.kind === 'halt' && steps) {
+      // The halt plan owns the ground the squad covers after the command:
+      // the one-more pace and half pace (quick) or the half pace and quick
+      // close (slow). The formation must move with the boots, not by a fixed
+      // constant, or the planted feet slide through the stop.
+      const haltPlan = Object.values(steps)[0];
+      if (haltPlan) {
         const f = forwardOf(frame.heading);
-        toFrame.x += f.x * delta;
-        toFrame.z += f.z * delta;
-        duration = leadPlan.paces * BEAT;
+        toFrame.x += f.x * haltPlan.total.z;
+        toFrame.z += f.z * haltPlan.total.z;
       }
     }
 
@@ -988,7 +1015,7 @@ export function sampleTimeline(timeline: Timeline, time: number): Sample {
     // so the frame uses the same progress as the planted feet instead of raw
     // time. Other linear movements keep their existing motion.
     const stepPlan = Object.values(seg.steps ?? {}).find(
-      (p) => (p.kind === 'march' || p.kind === 'changeStep') && p.bodyAt,
+      (p) => (p.kind === 'march' || p.kind === 'changeStep' || p.kind === 'halt') && p.bodyAt,
     );
     const stepBody = stepPlan?.bodyAt?.(raw);
     const frameProgress =

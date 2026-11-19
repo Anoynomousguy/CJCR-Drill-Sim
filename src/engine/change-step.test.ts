@@ -103,8 +103,9 @@ describe('change step on the march', () => {
     expect(stepPlan!.kind).toBe('changeStep');
     expect(stepPlan!.movements).toEqual(['half pace', 'close beside left', 'shot forward']);
     expect(stepPlan!.counts).toBe(3);
-    // Half a beat of command time, then three boots one beat apart.
-    expect(change.actionEnd - change.start).toBeCloseTo(2.5 * BEAT, 6);
+    // Half a beat to the first landing, then the three boots land half a beat
+    // apart: the manual counts them in double time.
+    expect(change.actionEnd - change.start).toBeCloseTo(1.5 * BEAT, 6);
   });
 
   it('plants the left half a pace on, closes the right beside it, then shoots the left', () => {
@@ -112,9 +113,9 @@ describe('change step on the march', () => {
     const at = (raw: number) => sampleStepPlan(p, raw);
     const start = at(0);
     const rightStart = start.body.z + start.right.z;
-    const first = at(0.2);
+    const first = at(1 / 3);
     const halfZ = first.body.z + first.left.z;
-    const second = at(0.6);
+    const second = at(2 / 3);
     const closeZ = second.body.z + second.right.z;
     const third = at(1);
     const shotZ = third.body.z + third.left.z;
@@ -186,7 +187,7 @@ describe('change step on the march', () => {
   it('keeps the body moving through the check instead of stalling', () => {
     const p = stepPlan!;
     let minSpeed = Infinity;
-    const secondsPerRaw = 2.5 * BEAT;
+    const secondsPerRaw = 1.5 * BEAT;
     for (let i = 2; i < 198; i += 1) {
       const raw = i / 200;
       const before = sampleStepPlan(p, raw - 0.002).body.z;
@@ -199,16 +200,18 @@ describe('change step on the march', () => {
     expect(p.total.z).toBeGreaterThan(0.6);
   });
 
-  it('lands one boot per beat through both seams and leaves the left forward', () => {
+  it('lands the boots in double time through both seams and leaves the left forward', () => {
     const landsBefore = plantTimes(timeline, before, id);
     const lands = plantTimes(timeline, change, id);
     const landsAfter = plantTimes(timeline, after, id);
 
     expect(lands.map((l) => l.side)).toEqual(['left', 'right', 'left']);
-    // The command falls on the right footfall: the left lands one beat later.
+    // The previous march ends half a beat after its last right footfall, so
+    // the left half pace lands one normal beat after that boot; the two
+    // double-time counts then follow half a beat apart.
     expect(lands[0].t - landsBefore[landsBefore.length - 1].t).toBeCloseTo(BEAT, 2);
     for (let i = 1; i < lands.length; i += 1) {
-      expect(lands[i].t - lands[i - 1].t, `beat ${i}`).toBeCloseTo(BEAT, 2);
+      expect(lands[i].t - lands[i - 1].t, `half beat ${i}`).toBeCloseTo(0.5 * BEAT, 2);
     }
     // The next march takes over one beat after the shot boot lands.
     expect(after.type).toBe('quickMarch');
@@ -227,8 +230,9 @@ describe('change step on the march', () => {
     const arms = stepPlan!.armsAt;
     expect(arms).toBeDefined();
     expect(arms!(0.1)).toBe(0);
-    expect(arms!(0.4)).toBeGreaterThan(0.9);
-    expect(arms!(0.55)).toBeGreaterThan(0.9);
+    expect(arms!(0.4)).toBe(0);
+    expect(arms!(0.7)).toBeGreaterThan(0.9);
+    expect(arms!(0.76)).toBeGreaterThan(0.9);
     expect(arms!(0.95)).toBeLessThan(0.1);
   });
 

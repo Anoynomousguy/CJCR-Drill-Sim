@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, PACE, PACE_HALF } from './constants';
+import { BEAT, DEFAULT_SETTINGS, PACE, PACE_HALF } from './constants';
 import { LEG, REACH, gaitCycle, gaitTargets, solveKnee } from './gait';
 import { makePlan } from '../state/store';
 import { buildTimeline, sampleTimeline } from './simulate';
@@ -115,9 +115,16 @@ describe('paces at the halt', () => {
     expect(end.left.planted && end.right.planted).toBe(true);
   });
 
-  it('steps back with the right foot first', () => {
+  it('steps back with the left foot first, the right closing', () => {
     const p = makePacesPlan({ paces: 2, total: { x: 0, z: -0.7 } })!;
-    expect(p.lead).toBe('R');
+    expect(p.lead).toBe('L');
+    // The rearward movement plants the LEFT boot first and closes with the
+    // right on the second pace.
+    const order = [p.left[1], p.right[1]]
+      .filter((plant) => plant.land > 0)
+      .sort((a, b) => a.land - b.land)
+      .map((plant) => plant.z);
+    expect(order[0]).toBeCloseTo(-0.35, 6);
     expect(p.movements).toEqual(['pace 1', 'pace 2', 'close']);
     expectNoSlip(p);
     expectReachable(p);
@@ -173,7 +180,7 @@ describe('open and close order', () => {
 
   it('closes order by the same three half paces in reverse', () => {
     const p = makePacesPlan({ paces: 3, total: { x: 0, z: -1.05 }, kind: 'close' })!;
-    expect(p.lead).toBe('R');
+    expect(p.lead).toBe('L');
     expectNoSlip(p);
     expectReachable(p);
   });
@@ -250,7 +257,6 @@ describe('halt', () => {
   it('takes one more pace, a left half pace, then closes the right knee', () => {
     const start = gaitTargets('quick', 0);
     const p = makeHaltPlan({
-      total: { x: 0, z: 0.75 },
       startLeft: { x: start.left.x, z: start.left.z },
       startRight: { x: start.right.x, z: start.right.z },
     })!;
@@ -441,11 +447,35 @@ describe('the programme uses the plans', () => {
     expect(plants[0].z).toBeCloseTo(0.35, 3);
     expect(plants[1].z - plants[0].z).toBeCloseTo(0.75, 3);
     // Half a pace shorter than the same march at speed: the nominal distance
-    // left the body sprinting the last half beat to catch the final boot.
-    expect(plan.total.z).toBeCloseTo(PACE_HALF + (plan.paces - 1) * PACE, 6);
+    // left the body sprinting the last half beat to catch the final boot. The
+    // march also hands over to the halt on the left foot, which adds the extra
+    // footfall's half pace on the next beat.
+    expect(plan.beats).toBe(plan.paces + 0.5);
+    expect(plan.total.z).toBeCloseTo(PACE_HALF + (plan.paces - 1) * PACE + PACE * 0.5, 6);
     expect(march.toFrame.z - march.fromFrame.z).toBeCloseTo(plan.total.z, 6);
     expectNoSlip(plan);
     expectReachable(plan);
+  });
+
+  it('lands the hand-over footfall a whole beat after the last pace', () => {
+    const march = segment('quickMarch');
+    const cadet = timeline.soldiers.find((s) => s.role === 'cadet')!;
+    const plan = march.steps![cadet.id]!;
+    const plants = [
+      ...plan.left.map((p) => ({ ...p, side: 'L' as const })),
+      ...plan.right.map((p) => ({ ...p, side: 'R' as const })),
+    ]
+      .filter((p) => p.land > 0 && p.land <= 1)
+      .sort((a, b) => a.land - b.land);
+    const last = plants[plants.length - 1];
+    const previous = plants[plants.length - 2];
+    // The march hands over to the halt on the left foot, so the extra footfall
+    // is the left, one whole quick-time beat after the right's last pace.
+    expect(last.label).toBe('next foot');
+    expect(last.side).toBe('L');
+    expect(previous.side).toBe('R');
+    const dt = (last.land - previous.land) * plan.beats! * BEAT;
+    expect(dt).toBeCloseTo(BEAT, 6);
   });
 
   it('eases the body off the halt instead of starting at full speed', () => {
@@ -531,5 +561,73 @@ describe('the programme uses the plans', () => {
         expect(atPause.right.z).toBeCloseTo(atActionEnd.right.z, 9);
       }
     }
+  });
+
+  it('gives each command to the foot the manual names', () => {
+    // Ch 3's command-foot table: the march before the command must finish with
+    // that foot forward, so the next movement starts on the right beat.
+    const lastFoot = (tl: ReturnType<typeof buildTimeline>, type: string, id: string) => {
+      const seg = tl.segments.find((s) => s.type === type)!;
+      const plan = seg.steps?.[id];
+      if (!plan) return null;
+      const plants = [
+        ...plan.left.map((p) => ({ foot: 'L' as const, land: p.land })),
+        ...plan.right.map((p) => ({ foot: 'R' as const, land: p.land })),
+      ]
+        .filter((p) => p.land > 0)
+        .sort((a, b) => a.land - b.land);
+      return plants[plants.length - 1]?.foot ?? null;
+    };
+    let k = 0;
+    const mv = (type: string, params: Record<string, number | string> = {}) => ({
+      id: `${type}-cmd-${k++}`,
+      type,
+      params,
+    });
+    const build = (programme: Plan['programme']) =>
+      buildTimeline({ version: 1, name: 'command feet', settings, roster, programme });
+    const cadet = timeline.soldiers[0].id;
+
+    // MARK TIME is given on the right foot; three paces would otherwise end
+    // on the left, so the march must add the right footfall.
+    const mark = build([mv('attention'), mv('quickMarch', { paces: 3 }), mv('markTime', { paces: 4 })]);
+    expect(lastFoot(mark, 'quickMarch', cadet)).toBe('R');
+
+    // RIGHT FORM is given on the left foot.
+    const form = build([mv('attention'), mv('quickMarch', { paces: 2 }), mv('formRight')]);
+    expect(lastFoot(form, 'quickMarch', cadet)).toBe('L');
+
+    // A slow-time halt is given on the right foot, not the left.
+    const slow = build([mv('attention'), mv('slowMarch', { paces: 3 }), mv('halt')]);
+    expect(lastFoot(slow, 'slowMarch', cadet)).toBe('R');
+  });
+
+  it('halts from slow time in the manual\'s two movements', () => {
+    const tl = buildTimeline({
+      version: 1,
+      name: 'slow halt',
+      settings,
+      roster,
+      programme: [move('attention'), move('slowMarch', { paces: 3 }), move('halt')],
+    });
+    const cadet = tl.soldiers.find((s) => s.role === 'cadet')!;
+    const halt = tl.segments.find((s) => s.type === 'halt')!;
+    const plan = halt.steps?.[cadet.id];
+    expect(plan, 'slow halt has a step plan').toBeDefined();
+    // The command is given as the right foot is forward. ONE is the left's
+    // half pace, TWO the right foot brought forward in quick time; there is no
+    // extra pace such as the quick halt's trailing boot takes.
+    expect(plan!.movements).toEqual(['half pace', 'right foot forward']);
+    expect(plan!.counts).toBe(2);
+    expect(plan!.start.right.z).toBeGreaterThan(plan!.start.left.z + 0.2);
+    expect(plan!.total.z).toBeCloseTo(0.65, 6);
+    // One slow beat (1 s) for the half pace and one quick beat (0.5 s) for the
+    // close: 1.5 s, not the quick halt's 1 s.
+    expect(halt.actionEnd - halt.start).toBeCloseTo(3 * BEAT, 6);
+    // The formation travels with the boots instead of a fixed half pace.
+    expect(halt.toFrame.z - halt.fromFrame.z).toBeCloseTo(plan!.total.z, 6);
+    const end = sampleStepPlan(plan!, 1);
+    expect(end.left.z).toBeCloseTo(0, 6);
+    expect(end.right.z).toBeCloseTo(0, 6);
   });
 });

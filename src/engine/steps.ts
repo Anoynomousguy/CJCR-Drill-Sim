@@ -87,6 +87,12 @@ export interface StepPlan {
    * sides on count two and picks the swing up again on count three.
    */
   armsAt?: (raw: number) => number;
+  /**
+   * Pace intervals the action covers. A march that must hand over on the other
+   * foot takes one extra footfall, and therefore half an interval more time
+   * and half a pace more ground than its ordered paces.
+   */
+  beats?: number;
 }
 
 export interface StepSample {
@@ -189,9 +195,10 @@ function heelPose(
  * Paces forward / to the rear / open and close order.
  *
  * The leading foot takes `paces` half paces; the other foot closes on the last
- * one. Forward leads left, backward leads right (A-DH-201-000 Ch 2). The body
- * travels during the paces and holds still for the closing movement, which is
- * why the count timing is "one, one, one-two".
+ * one. Both a pace forward and a step back lead with the LEFT foot; only the
+ * feet's direction changes (A-DH-201-000 Ch 2, paras 71-78). The body travels
+ * during the paces and holds still for the closing movement, which is why the
+ * count timing is "one, one, one-two".
  */
 export function makePacesPlan(opts: {
   paces: number;
@@ -206,7 +213,9 @@ export function makePacesPlan(opts: {
   const dir = forward === 0 ? 1 : Math.sign(forward);
   const half = Math.abs(forward) / paces;
   const actionBeats = paces + 1;
-  const lead: StepFoot = dir > 0 ? 'L' : 'R';
+  // The manual starts both a pace forward and a step back with the LEFT foot;
+  // only the direction of travel changes (Ch 2, paras 71-78).
+  const lead: StepFoot = 'L';
   const start = {
     left: { x: LEG.standX, z: 0 },
     right: { x: -LEG.standX, z: 0 },
@@ -354,11 +363,9 @@ export function makeSidePlan(opts: { paces: number; total: Vec2 }): StepPlan | n
  * the whole action instead of stopping halfway and holding.
  */
 export function makeHaltPlan(opts: {
-  total: Vec2;
   startLeft: Vec2 & Partial<FootTarget>;
   startRight: Vec2 & Partial<FootTarget>;
 }): StepPlan | null {
-  if (Math.hypot(opts.total.x, opts.total.z) < 0.02) return null;
   const actionBeats = 2;
   const start = { left: { ...opts.startLeft }, right: { ...opts.startRight } };
   const left: StepPlant[] = [{ ...start.left, land: 0, lift: null, liftHeight: 0, label: 'stand' }];
@@ -370,8 +377,7 @@ export function makeHaltPlan(opts: {
   const stepList = stepFoot === 'L' ? left : right;
   const closeList = closeFoot === 'L' ? left : right;
   const closeStart = closeFoot === 'L' ? start.left : start.right;
-  const dir = Math.sign(opts.total.z) || 1;
-  const finalZ = closeStart.z + dir * PACE_HALF;
+  const finalZ = closeStart.z + PACE_HALF;
   const stepX = stepFoot === 'L' ? LEG.standX : -LEG.standX;
   const closeX = closeFoot === 'L' ? LEG.standX : -LEG.standX;
 
@@ -431,6 +437,69 @@ export function makeHaltPlan(opts: {
       x: 0,
       z: finalZ * (1 - (1 - clamp01(raw)) ** 2),
     }),
+  };
+}
+
+/**
+ * HALT from the slow march (Ch 3, "Marching and halting in slow time"). The
+ * command is given as the RIGHT foot is forward, and the halt itself is only
+ * two movements, not the quick halt's three:
+ *
+ *   ONE   the left foot takes a further half pace in slow time, placed flat;
+ *   TWO   the right knee bends and the right foot is brought forward in quick
+ *         time, beside the left, to attention.
+ *
+ * It is counted "one-two": one slow beat for the half pace, then a quick beat
+ * to close. The right boot's forward step in quick time is what distinguishes
+ * this from the quick halt, where the trailing boot takes a pace first.
+ */
+export function makeSlowHaltPlan(opts: {
+  startLeft: FootTarget;
+  startRight: FootTarget;
+}): StepPlan | null {
+  const start = { left: { ...opts.startLeft }, right: { ...opts.startRight } };
+  if (!Number.isFinite(start.left.z) || !Number.isFinite(start.right.z)) return null;
+  const finalZ = start.right.z + PACE_HALF;
+  const left: StepPlant[] = [{ ...start.left, land: 0, lift: null, liftHeight: 0, label: 'stand' }];
+  const right: StepPlant[] = [{ ...start.right, land: 0, lift: null, liftHeight: 0, label: 'stand' }];
+  // ONE: the left closes the stride with its half pace, flat on the ground.
+  push(
+    left,
+    {
+      x: LEG.standX,
+      z: finalZ,
+      land: 2 / 3,
+      lift: null,
+      liftHeight: 0.06,
+      label: 'half pace',
+    },
+    0.06,
+  );
+  // TWO: the right comes forward in quick time beside the left.
+  push(
+    right,
+    {
+      x: -LEG.standX,
+      z: finalZ,
+      land: 1,
+      lift: null,
+      liftHeight: 0.05,
+      label: 'right foot forward',
+    },
+    2 / 3,
+  );
+  return {
+    kind: 'halt',
+    total: { x: 0, z: finalZ },
+    moveEnd: 1,
+    left,
+    right,
+    start,
+    paces: 1,
+    lead: 'L',
+    counts: 2,
+    movements: ['half pace', 'right foot forward'],
+    bodyAt: (raw) => ({ x: 0, z: finalZ * smoothstep(clamp01(raw / (2 / 3))) }),
   };
 }
 
@@ -551,6 +620,7 @@ export function makeMarchPlan(opts: {
         right: { x: startRight.x, z: startRight.z },
       },
       paces: beats,
+      beats,
       lead: opts.lead,
       counts: beats,
       movements,
@@ -594,7 +664,7 @@ export function makeMarchPlan(opts: {
     return firstStep + cruisingPace * (beat - 1);
   };
   const bodyProgressAt = (beat: number) =>
-    opts.fromHalt ? halfBodyAtBeat(beat) : distance * (beat / paces);
+    opts.fromHalt ? halfBodyAtBeat(beat) : travel * (beat / beats);
   // Carry the exact boot pose the previous movement left. A raised heel at a
   // plant-to-plant seam must stay raised, or the pelvis drops to reach a foot
   // that was suddenly laid flat.
@@ -609,6 +679,17 @@ export function makeMarchPlan(opts: {
   const movements: string[] = [];
   const lastContact: Record<StepFoot, number> = { L: -Infinity, R: -Infinity };
   const footAt = (i: number): StepFoot => (i % 2 === 0 ? opts.lead : opposite(opts.lead));
+  const lastFoot = footAt(paces - 1);
+  // A command that must be given on the other foot hands over with one more
+  // footfall. It lands on the next normal beat rather than half a beat after
+  // the last ordered pace, so the march gains half a pace interval of time and
+  // half a pace of ground; the footfall then keeps the cruising cadence.
+  const extraFoot = Boolean(opts.endFoot && opts.endFoot !== lastFoot);
+  const beats = paces + (extraFoot ? 0.5 : 0);
+  // The extra footfall keeps the cruising cadence, so it adds half a pace
+  // interval of time and the ground the body covers in that interval: half a
+  // pace on a full-length stride, half the cruising pace from a short step-off.
+  const travel = distance + (extraFoot ? (opts.fromHalt ? cruisingPace * 0.5 : (distance * 0.5) / paces) : 0);
 
   for (let i = 0; i < paces; i += 1) {
     const foot = footAt(i);
@@ -619,13 +700,13 @@ export function makeMarchPlan(opts: {
         ? firstStep + i * cruisingPace
         : bodyProgressAt(contactBeat) + contactOffset);
     const list = foot === 'L' ? left : right;
-    const swingStart = Math.max(0, contactBeat - 0.84) / paces;
+    const swingStart = Math.max(0, contactBeat - 0.84) / beats;
     push(
       list,
       {
         x: foot === 'L' ? track : -track,
         z,
-        land: contactBeat / paces,
+        land: contactBeat / beats,
         lift: null,
         liftHeight: 0.14,
         label: `pace ${i + 1}`,
@@ -636,12 +717,12 @@ export function makeMarchPlan(opts: {
     movements.push(`pace ${i + 1}`);
   }
 
-  const lastFoot = footAt(paces - 1);
-  if (opts.endFoot && opts.endFoot !== lastFoot) {
+  if (extraFoot && opts.endFoot) {
     const foot = opts.endFoot;
-    const z = dir * (distance + contactOffset);
+    const contactBeat = paces + 0.5;
+    const z = dir * (bodyProgressAt(contactBeat) + contactOffset);
     const list = foot === 'L' ? left : right;
-    lastContact[foot] = paces;
+    lastContact[foot] = contactBeat;
     push(
       list,
       {
@@ -653,7 +734,7 @@ export function makeMarchPlan(opts: {
         label: 'next foot',
         yaw: foot === 'L' ? toe : -toe,
       },
-      Math.max(0, paces - 0.84) / paces,
+      Math.max(0, contactBeat - 0.84) / beats,
     );
     movements.push('next foot');
   }
@@ -666,7 +747,7 @@ export function makeMarchPlan(opts: {
   for (const side of (opts.trailSwing === false ? [] : ['L', 'R'] as const)) {
     const nextContact = lastContact[side] + 2;
     const swingStartBeat = nextContact - 0.84;
-    if (!Number.isFinite(lastContact[side]) || swingStartBeat >= paces) continue;
+    if (!Number.isFinite(lastContact[side]) || swingStartBeat >= beats) continue;
     const z = dir * (bodyProgressAt(nextContact) + contactOffset);
     const list = side === 'L' ? left : right;
     push(
@@ -674,19 +755,21 @@ export function makeMarchPlan(opts: {
       {
         x: side === 'L' ? track : -track,
         z,
+        // This plant is beyond the movement: it only lifts the previous boot
+        // so the next movement starts from a swing, never a flat drag.
         land: nextContact / paces,
         lift: null,
         liftHeight: 0.12,
         label: 'swing through',
         yaw: side === 'L' ? toe : -toe,
       },
-      Math.max(0, swingStartBeat) / paces,
+      Math.max(0, swingStartBeat) / beats,
     );
   }
 
   const plan: StepPlan = {
     kind: 'march',
-    total: { x: 0, z: dir * distance },
+    total: { x: 0, z: dir * travel },
     moveEnd: 1,
     left,
     right,
@@ -695,6 +778,7 @@ export function makeMarchPlan(opts: {
       right: { x: startRight.x, z: startRight.z },
     },
     paces,
+    beats,
     lead: opts.lead,
     counts: paces,
     movements,
@@ -702,9 +786,9 @@ export function makeMarchPlan(opts: {
   if (opts.fromHalt) {
     // The plants and the body already share `bodyProgressAt`; drive the
     // rendered frame from that same curve instead of repeating it here.
-    plan.bodyAt = (raw) => ({ x: 0, z: dir * bodyProgressAt(clamp01(raw) * paces) });
+    plan.bodyAt = (raw) => ({ x: 0, z: dir * bodyProgressAt(clamp01(raw) * beats) });
   }
-  plan.hipCurve = buildMarchHipCurve(plan, paces);
+  plan.hipCurve = buildMarchHipCurve(plan, beats);
   plan.flatEnd = opts.flatEnd;
   return plan;
 }
@@ -748,17 +832,18 @@ export function makeChangeStepPlan(opts: {
   const body1 = leftHalf - 0.05;
   const body2 = leftHalf + 0.12;
   const body3 = leftShot - 0.06;
-  // The command falls on the right footfall, so the first count is only half a
-  // beat away: the three boots land at +0.5, +1.5 and +2.5 beats. The action
-  // ends on the third landing, which is where the next march takes over.
+  // The command falls on the right footfall and the counts are called in
+  // double time, so the three boots land half a beat apart at +0.5, +1 and
+  // +1.5 beats. The action ends on the third landing, which is where the next
+  // march takes over, still in quick time.
   const bodyAtBeat = (beat: number) => {
     if (beat <= 0) return 0;
     if (beat <= 0.5) return hermite(0, PACE, body1, 0.16, beat, 0.5);
-    if (beat <= 1.5) return hermite(body1, 0.16, body2, 0.16, beat - 0.5, 1);
+    if (beat <= 1) return hermite(body1, 0.16, body2, 0.16, beat - 0.5, 0.5);
     // The check leaves the squad walking slowly; the next march steps off
     // from this speed (CHANGE_STEP_END_SPEED) instead of snapping back to the
     // cruising pace at the seam.
-    return hermite(body2, 0.16, body3, CHANGE_STEP_END_SPEED, beat - 1.5, 1);
+    return hermite(body2, 0.16, body3, CHANGE_STEP_END_SPEED, beat - 1, 0.5);
   };
   const left: StepPlant[] = [
     { ...startLeft, land: 0, lift: null, liftHeight: 0, label: 'stand' },
@@ -772,7 +857,7 @@ export function makeChangeStepPlan(opts: {
     {
       x: track,
       z: leftHalf,
-      land: 0.2,
+      land: 1 / 3,
       lift: null,
       liftHeight: 0.1,
       label: 'half pace',
@@ -786,7 +871,7 @@ export function makeChangeStepPlan(opts: {
     {
       x: -track,
       z: leftHalf,
-      land: 0.6,
+      land: 2 / 3,
       lift: null,
       liftHeight: 0.14,
       label: 'close beside left',
@@ -826,12 +911,13 @@ export function makeChangeStepPlan(opts: {
     counts: 3,
     movements: ['half pace', 'close beside left', 'shot forward'],
   };
-  plan.bodyAt = (raw) => ({ x: 0, z: bodyAtBeat(clamp01(raw) * 2.5) });
+  plan.bodyAt = (raw) => ({ x: 0, z: bodyAtBeat(clamp01(raw) * 1.5) });
   // TWO cuts the arms to the sides; THREE picks the marching swing up again.
   plan.armsAt = (raw) => {
-    if (raw <= 0.2) return 0;
-    if (raw <= 0.6) return smoothstep(clamp01((raw - 0.2) / 0.06));
-    return 1 - smoothstep(clamp01((raw - 0.6) / 0.12));
+    if (raw <= 0.5) return 0;
+    if (raw <= 0.66) return smoothstep(clamp01((raw - 0.5) / 0.16));
+    if (raw <= 0.78) return 1;
+    return 1 - smoothstep(clamp01((raw - 0.78) / 0.2));
   };
   return plan;
 }

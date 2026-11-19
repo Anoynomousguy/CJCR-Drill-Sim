@@ -361,7 +361,7 @@ describe('step plans on the live rig', () => {
     const plan = makeChangeStepPlan({ startLeft: seam.left, startRight: seam.right })!;
     const march = { ...BASE, gait: 'quick' as const };
     const at = (armCut: number) => {
-      const step = sampleStepPlan(plan, 0.4);
+      const step = sampleStepPlan(plan, 0.7);
       fig.setTransform(step.body.x, step.body.z, 0);
       for (let i = 0; i < 24; i += 1) {
         fig.animate({

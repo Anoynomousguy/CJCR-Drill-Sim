@@ -257,4 +257,17 @@ describe('rifle footwork and timeline', () => {
     expect(samples[1].gripR).toBe(1);
     expect(samples[2].gripR).toBe(0);
   });
+
+  it('uses the manual counts for port arms and the inspection', () => {
+    // PORT — ARMS alone is the one-movement doubling port; the inspection is
+    // FOR INSPECTION, PORT — ARMS, five movements with the standard pause
+    // between them (CATO 54-04 paras 46-49; A-CR-CCP-053 Ch 2).
+    const port = timelineOf([move('attention'), move('portArms')]);
+    const one = port.segments.find((s) => s.type === 'portArms')!;
+    expect(one.actionEnd - one.start).toBeCloseTo(BEAT, 6);
+
+    const inspect = timelineOf([move('attention'), move('forInspection')]);
+    const five = inspect.segments.find((s) => s.type === 'forInspection')!;
+    expect(five.actionEnd - five.start).toBeCloseTo(5 * BEAT + 4 * STANDARD_PAUSE, 6);
+  });
 });
